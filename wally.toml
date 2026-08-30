@@ -1,0 +1,8 @@
+[package]
+name = "awakesl/instinct"
+description = "Creatures that predict what their senses will report, and act to close the gap."
+version = "0.1.0"
+license = "MIT"
+registry = "https://github.com/UpliftGames/wally-index"
+realm = "shared"
+include = ["src", "src/**", "default.project.json", "wally.toml", "README.md", "LICENSE"]

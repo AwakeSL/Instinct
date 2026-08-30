@@ -1,0 +1,11 @@
+{
+  "name": "instinct-test",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "$className": "ReplicatedStorage",
+      "Instinct": { "$path": "src" },
+      "Tests": { "$path": "test" }
+    }
+  }
+}
