@@ -1,80 +1,98 @@
 # instinct
 
-**Creatures that predict what their senses will report, and act to close the gap.**
+**Creatures that learn what their senses predict, what their acts do, and what to do about it.**
 
-A creature holds beliefs as `(value, spread)` pairs. It predicts what it is about to perceive, the
-world reports something else, and that difference is both the only reason it acts and the only way
-it learns. Nothing is scored, weighted or ranked by a system you cannot see: an action is chosen
-because it is predicted to cancel an error the creature currently holds.
+A creature holds a few tiny linear predictions and nothing else: what each reading it cares about
+(meals, damage dealt, damage taken...) will accumulate over the next couple of seconds, from what it
+senses and what it picks; what each of its options does to the senses one step on; and a memory of
+the moments that surprised it for the better. Every tick it scores every combination of its options
+on those predictions, looks one step ahead through the best few, and takes the best. The rows settle
+a horizon later and every model updates online. Nothing is scored by a system you cannot see, and
+nothing it holds is a rule: an instinct is a prior with a confidence, and the world revises it.
 
 ```lua
 local Instinct = require(path.to.Instinct)
+local Mind, Senses, Coach = Instinct.Mind, Instinct.Senses, Instinct.Coach
 
-local i = Instinct.new():defaults()
+-- every world is read through the same layout: the self, then one slot per role
+local SLOTS = { "host", "item", "haz", "ally" }
+local NAMES = Senses.layout(SLOTS)
 
-i:quantity("hydration")
-i:role("self")
-i:part("legs")
-i:part("head")
-i:sense("sight", { needs = "eyes" })
-i:sense("body", {})
-i:kind("drinkable")
-i:kind("water", { is = { "drinkable" } })
+local CHOICES = {
+    { name = "target", options = { "keep", "hostile", "item" } },
+    { name = "move", options = { "hold", "approach", "retreat", "orbit" } },
+    { name = "act", options = { "none", "strike", "parry" } },
+}
 
-i:action("walk_to", { occupies = { legs = 2 }, settles = { "at" } })
-i:action("drink", {
-    requires = { at = "drinkable" },
-    occupies = { head = 1 },
-    predicts = { { of = "self", hydration = { 0.80, spread = 0.10 }, after = { 4.0, spread = 2.0 } } },
+local mind = Mind.new(#NAMES, CHOICES, {
+    readings = { "dealt", "taken", "eaten" },
+    pref = { dealt = 1, taken = -1, eaten = 20 },   -- the only thing you author about what is good
+    horizon = 24,   -- decisions a row waits before it is judged
+    step = 12,      -- decisions between an act and its measured effect
 })
+local coach = Coach.new(mind, { explore = 5, every = 10, floor = "explore" })
 
-i:species("elf", {
-    parts   = { legs = 2, head = 1 },
-    senses  = { sight = {}, body = {} },
-    expects = { hydration = { 0.90, spread = 0.15 } },
-    dials   = { patience = { 0.4, 0.9 }, caution = { 0.2, 0.6 } },
-})
-
-local elf = i:spawn("elf", { seed = 0x5E1F })
-
-i:perceive(elf, {
-    { via = "body", raw = { hydration = 0.3 } },
-    { subject = pond, kind = "water", via = "sight", raw = { distance = 40 } },
-})
-
-local doing = i:think(elf, dt, now)
+-- each decision (ten a second is the tested rate)
+local x = Senses.encode(me, SLOTS, { host = wolf, item = food }, nil, 90)
+local picks, xr, phi, event = mind:think(function() return x end, feasible)
+mind:note(xr, phi, picks, event, totals, tick)
+-- ...then, when the world has moved on:
+mind:settle(totals, Senses.encode(...), tick, false)
 ```
 
-- **Every value is a prior, and every prior can move.** The numbers on an action are what a creature
-  starts out believing about it, not what is true. Two creatures given different lives end up
-  disagreeing about the same wolf.
-- **Taming and trauma come out of one update.** Repeated uneventful contact narrows a belief
-  gradually because each quiet moment is weak evidence; one catastrophe moves it hard in a single
-  step and leaves the creature uncertain, because a dramatic event is not ambiguous. There is no
-  branch between them.
-- **Forgetting is a spread relaxing toward its parent.** An unseen subject drifts back into being a
-  generic member of its kind, so nothing is evicted and half remembering is a real state.
-- **An error smaller than its own spread is not evidence.** A creature ignores what sits inside the
-  range its model already allows, which is why a tamed wolf stops provoking anything at all.
-- **A bare list sums**, so `{ 15, 23 }` is 38; named keys are operators you declared, applied in the
-  stage order you gave them. Uncertainty propagates through the arithmetic.
-- **Dials are expressions, not just numbers.** `caution = { 0.3, { "downside", times = 0.9 } }` is a
-  creature that needs more certainty as the stakes rise.
-- **You can ask why.** `i:why(elf)` returns the driving error in spreads, the chain, everything that
-  was considered, and what each option lost on.
+`totals` are the readings' running totals; the mind works with their differences. `feasible(picks)`
+says what the world would accept. Cut a life into windows and tell the coach when each ends and what
+it scored: `coach:beginEpisode()` and `coach:endEpisode(score)`.
 
-`docs/Spec.md` is the build spec the implementation is held to.
+## What earned its place
 
-## Install
+Everything here was measured against alternatives in an offline prototype, on an arena of scripted
+fighters, a foraging puzzle, a sheep-and-wolves world, and a generator of random worlds with four held
+out that were never tuned on. The running log is `C:\lua code\FINDINGS.md`; the short version:
 
-```toml
-[dependencies]
-Instinct = "awakesl/instinct@0.1.0"
+- **One linear outcome model with a flag per option** carries the policy. Every attempt to judge an
+  option by its consequences alone made the creature uniformly worse.
+- **Per-option effects models, one step ahead.** A second step, longer chains, and bootstrapped
+  returns all lost: each projected step compounds the models' error.
+- **A short horizon.** Longer waits credit every option with whatever happens later; the memory of
+  surprises carries the long consequences instead.
+- **Memory of surprises.** A surprisingly good moment is stored with its senses and picks and replayed
+  when the senses come near, for as long as its retests keep earning it.
+- **Acquisition.** Where a reading keeps being wrong, a search over operator pairs of the raw inputs
+  invents a new input with a tight prior.
+- **The coach.** Random windows at birth seed everything, and a creature doing worse than a random
+  policy after a fair try forgets its conclusions and explores again. This is what turned a coin-flip
+  failure on new worlds into every seed learning.
+- **The slot layout.** The same seven descriptors for whatever fills a slot, in the creature's own
+  frame, with no world flags. A creature that has lived in other worlds learns a new one in two to
+  four times fewer rows.
+- **Shared effects across a kind.** The physics is the same for everyone; sharing it is the biggest
+  saving in memory and the fastest learning of what acts do.
+
+## Instincts
+
+A knowledge file is a table of revisable priors, loaded with `mind:learnFrom(file, NAMES)`:
+
+```lua
+return {
+    priors = { { reading = "dealt", feature = "act=strike", w = 15, conf = 50 } },
+    features = { { op = "mul", a = "hostdist", b = "hostclosing" } },
+    effects = { { option = "move=approach", sense = "itemdist", dw = -0.2, conf = 2 } },
+    curious = { { a = "hosthp", b = "act=strike" } },
+    memories = { { x = { itemthere = 1, itemdist = 0.1 }, picks = { 3, 2, 1 }, y = 20 } },
+}
 ```
 
-## Development
+A prior sets a weight and how sure the creature starts; a feature declares a pair worth making; an
+effect says what an option does to a sense; a curious pair is searched first; a memory matches only on
+the senses it names. `mind:distill(NAMES)` produces one of these from a creature that has lived, for a
+spawn of the same kind; `mind:save()` and `mind:load()` are the whole creature as plain data.
+
+## Checking it
 
 ```
-lune run scripts/headless      # the suite
-selene src test scripts        # lint
+lune run scripts/mind [episodes]     # env WORLD=2|24, SEED
 ```
+
+runs a creature in the prototype's worlds without Roblox and reports rows to threshold, the final
+score against a greedy hand policy, microseconds a think, and a save-and-reload check.

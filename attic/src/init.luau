@@ -12,6 +12,18 @@ local Blame = require("@self/Blame")
 local Instinct = {}
 Instinct.__index = Instinct
 
+-- Looking at something tightens what is believed about it, toward this floor at this rate. The
+-- floor is not zero: watching a thing does not make you certain of it, it makes you better
+-- informed than you were.
+local WATCH_RATE = 1.2
+local WATCH_FLOOR = 0.06
+
+-- Drift sampling: how often to take a reading, how wide a newborn holds its own drift, and how
+-- much to trust one reading. A creature that has never run down believes it never will.
+local DRIFT_EVERY = 0.5
+local DRIFT_UNSURE = 0.05
+local DRIFT_NOISE = 0.02
+
 local DIAL_DEFAULT: { [string]: number } = {
 	patience = 0.5,
 	commitment = 0.5,
@@ -25,6 +37,17 @@ local DIAL_DEFAULT: { [string]: number } = {
 	capacity = 0.5,
 	attribution = 0.9,
 	insight = 0.4,
+	-- How much an option being UNKNOWN is worth, as against an option being good. At 0 a creature
+	-- only ever does the thing it currently believes pays best, which sounds sensible and is how it
+	-- gets permanently stuck: an option believed to be worth nothing is never picked, so it is never
+	-- tested, so the belief that killed it can never be revised. Raised, a creature will try
+	-- something it is merely unsure of when nothing it trusts is available.
+	--
+	-- Defaults to 0, and must. A creature that freezes under steep caution, or refuses to chain
+	-- with no patience, is doing something the package deliberately specifies -- and an experiment
+	-- admitted regardless of caution would quietly undo both. Venturing is a disposition a species
+	-- is given, not a correction applied to every creature.
+	venture = 0,
 }
 
 Instinct.DIALS = DIAL_DEFAULT
@@ -342,7 +365,11 @@ function Instinct.spawn(self: any, speciesName: string, options: any?): any
 	for quantity, authored in pairs(species.expects) do
 		local value = if type(authored) == "table" then authored[1] else authored
 		local spread = if type(authored) == "table" then (authored.spread or 0.1) else 0.1
-		expects[quantity] = { value = value, spread = spread }
+		-- `after` turns a need from a snapshot into a forecast: not "I am below where I should be"
+		-- but "I will be, in this many seconds, if nothing changes". Defaults to 0, which is the
+		-- old instantaneous behaviour exactly.
+		local after = if type(authored) == "table" then (authored.after or 0) else 0
+		expects[quantity] = { value = value, spread = spread, after = after }
 	end
 
 	local forms: { [string]: boolean } = {}
@@ -408,6 +435,8 @@ function Instinct.spawn(self: any, speciesName: string, options: any?): any
 		recent = {},
 		gains = {},
 		gainOf = {},
+		actionPredicts = {},
+		driftSeen = {},
 		wasLevel = {},
 		residual = {},
 		learned = {},
@@ -730,6 +759,41 @@ function Instinct.think(self: any, id: any, dt: number, now: number): any
 	state.now = now
 	self.counts.thinks += 1
 
+	-- How fast the creature runs down, learned rather than authored. A quantity with a horizon on
+	-- it needs a trajectory to project along, and that trajectory is a belief like any other: held
+	-- with a spread, wrong at first, narrowing with experience. A newborn does not know it gets
+	-- hungry -- its drift belief sits at zero held very wide, so its forecast is too uncertain to
+	-- be worth acting on, and it only starts anticipating once it has felt itself empty a few
+	-- times.
+	--
+	-- Only declines are sampled. Rises are the creature being fed or healed, which say nothing
+	-- about how fast it runs down unattended, and averaging them in would cancel the drift to zero.
+	for quantity, prior in state.expects do
+		if (prior.after or 0) <= 0 then
+			continue
+		end
+		local level = state.level[quantity]
+		if level == nil then
+			continue
+		end
+		local seen = state.driftSeen[quantity]
+		if seen == nil then
+			state.driftSeen[quantity] = { at = now, level = level }
+			continue
+		end
+		local span = now - seen.at
+		if span < DRIFT_EVERY then
+			continue
+		end
+		local observed = (level - seen.level) / span
+		state.driftSeen[quantity] = { at = now, level = level }
+		if observed >= 0 then
+			continue
+		end
+		local held = state.hold(("drift|%s"):format(quantity), 0, DRIFT_UNSURE, "drift")
+		Beliefs.update(held, observed, DRIFT_NOISE, state.dial("adaptability"))
+	end
+
 	local adaptability = state.dial("adaptability")
 	local index = 1
 	while index <= #state.pending do
@@ -924,6 +988,58 @@ function Instinct.think(self: any, id: any, dt: number, now: number): any
 
 	state.pressure = if #errors > 0 then errors[1].salience else 0
 
+	-- Commit whatever the creature is doing to the pending run, the same way a prediction about
+	-- a kind is committed in Think.predictedErrors. Without this an `action|` belief is created
+	-- for scoring and then never checked against what followed, so a creature stays wrong about
+	-- its own punch forever however often it throws one. This runs on every exit that keeps an
+	-- action rather than only where one is chosen, because a creature holding an action across
+	-- many ticks has to keep re-checking it; `state.expect` de-duplicates by key, so a fresh row
+	-- is filed only once the previous one has resolved. The check itself is already generic --
+	-- the horizon sweep above reads a pending row by key and neither knows nor cares that this
+	-- one names an action.
+	local function keep(chosen: string?): string?
+		if chosen == nil then
+			return nil
+		end
+		local action = reg.actions[chosen]
+		if action == nil then
+			return chosen
+		end
+
+		-- An action that narrows does its work by being performed: every belief the creature holds
+		-- about the thing it is attending to gets tighter. Nothing else in the package narrows a
+		-- belief except a prediction coming due, which is why an action like `watch` did nothing at
+		-- all before -- and, since 0.2.0, would have taught the creature that watching is useless.
+		-- Curiosity closes its own loop from here: the emotion reads the widest belief held about a
+		-- subject, so tightening those beliefs lowers it without anything having to say so.
+		if action.narrows ~= nil and state.target ~= nil then
+			local mark = ("subject|%s"):format(tostring(state.target))
+			for name, held in state.beliefs do
+				if name:find(mark, 1, true) then
+					Beliefs.relax(held, held.v, WATCH_FLOOR, WATCH_RATE, dt)
+				end
+			end
+		end
+		local view = if state.target ~= nil then per.bySubject[state.target] else nil
+		local function seen(name: string): (number?, number)
+			if view ~= nil then
+				return Percepts.read(per, view, name)
+			end
+			return nil, 0
+		end
+		for _, predicted in Think.predictsOf(state, action) do
+			if predicted.of ~= "self" or not Think.whenHolds(state, predicted, state.target) then
+				continue
+			end
+			local held, key = Think.actionBelief(state, action, predicted)
+			local delta = Values.resolve(reg, predicted.expr, seen, held.v, held.s)
+			if delta ~= nil then
+				state.expect(key, held, predicted, state.target, delta)
+			end
+		end
+		return chosen
+	end
+
 	if #errors == 0 then
 		state.last = { errors = errors, considered = {} }
 		if state.doing ~= nil then
@@ -956,12 +1072,14 @@ function Instinct.think(self: any, id: any, dt: number, now: number): any
 				return nil, 0
 			end
 
-			local cancels, spread = Think.cancelsSelf(reg, state, action, err, look)
+			local cancels, spread = Think.cancelsSelf(reg, state, action, err, look, target)
 			if cancels <= 0 and target ~= nil then
 				local gained, gs = Think.cancelsThreat(reg, state, per, action, err, target)
 				cancels, spread = gained, gs
 			end
-			if cancels <= 0 then
+			local unknown = Think.unknownOf(state, action)
+			local venture = unknown * state.dial("venture") * math.min(err.amount, 1)
+			if cancels <= 0 and venture <= 0 then
 				continue
 			end
 
@@ -978,10 +1096,21 @@ function Instinct.think(self: any, id: any, dt: number, now: number): any
 				end
 			end
 
+			-- What trying this would teach. An action the creature holds a wide belief about has
+			-- something to tell it; one it is already sure of has nothing. Scaled by how badly the
+			-- creature needs an answer, so it experiments under pressure rather than idly.
+			--
+			-- This is the term that stops "worth nothing" being a life sentence. Without it the
+			-- creature only ever considers what it already believes will pay, so a move it has
+			-- learned is useless -- or one a feature multiplied to zero -- can never be tried
+			-- again, however much the world has changed since. With it, an option that promises
+			-- nothing is still admitted as an experiment, and wins only when nothing better stands.
 			local confidence = Think.confidenceOf(cancels, spread)
 			local pressure = Think.costPressure(state, action)
-			local score = cancels * confidence - pressure * 0.15
-			local passes = confidence >= Think.threshold(state, err.amount)
+			local score = cancels * confidence + venture - pressure * 0.15
+			-- An experiment does not have to clear caution, because it is not claiming it will
+			-- work. It only ever wins when everything that does make a claim has failed to.
+			local passes = confidence >= Think.threshold(state, err.amount) or venture > 0
 			local row = {
 				action = name,
 				cancels = cancels,
@@ -1016,7 +1145,7 @@ function Instinct.think(self: any, id: any, dt: number, now: number): any
 		if shy > 0 then
 			self.counts.belowThreshold += 1
 		end
-		return state.doing
+		return keep(state.doing)
 	end
 
 	local head = best.chain[1]
@@ -1031,7 +1160,7 @@ function Instinct.think(self: any, id: any, dt: number, now: number): any
 			end
 		end
 		if incumbent ~= nil and best.score < incumbent.score + holdOn then
-			return state.doing
+			return keep(state.doing)
 		end
 		self.counts.chainsAbandoned += 1
 	end
@@ -1047,9 +1176,10 @@ function Instinct.think(self: any, id: any, dt: number, now: number): any
 		if #best.chain > 1 then
 			self.counts.chainsFormed += 1
 		end
+
 	end
 
-	return state.doing
+	return keep(state.doing)
 end
 
 function Instinct.step(self: any, dt: number, now: number, options: any?): any
@@ -1240,7 +1370,7 @@ function Instinct.extract(self: any, id: any, fields: { string }?, options: any?
 		for _, name in self.reg.actionOrder do
 			local action = self.reg.actions[name]
 			local predicts: any = {}
-			for _, predicted in action.predicts do
+			for _, predicted in Think.predictsOf(state, action) do
 				local key = ("action|%s|%s|%s"):format(name, predicted.of, predicted.quantity)
 				local held = state.beliefs[key]
 				if held == nil then

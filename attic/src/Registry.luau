@@ -240,6 +240,10 @@ function Registry.action(self: Registry, name: string, decl: any?)
 		occupies = table.freeze(occupies),
 		settles = table.freeze(settles),
 		skill = row.skill,
+		-- What the action is for, when what it is for is finding something out. `narrows = "subject"`
+		-- marks an action whose payoff is a tighter belief about its target rather than a changed
+		-- quantity -- looking at a thing to find out what it is.
+		narrows = row.narrows,
 		predicts = row.predicts or {},
 		costs = table.freeze(table.clone(row.costs or {})),
 	} :: any

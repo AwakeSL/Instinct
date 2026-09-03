@@ -51,11 +51,29 @@ function Think.selfErrors(state: any, out: { Error })
 		if held == nil then
 			continue
 		end
-		local want = prior.value - held
+
+		-- With a horizon, the need is measured against where the creature is HEADING rather than
+		-- where it is, projected along its own believed drift. The projection carries that belief's
+		-- uncertainty, widened by how far ahead it reaches: being unsure how fast you empty makes a
+		-- distant forecast worth very little, and a wide enough one falls under the salience floor
+		-- and is ignored. So foresight is not switched on -- it sharpens as the creature learns its
+		-- own body, and reaches less far the less certain it is.
+		local after = prior.after or 0
+		local looking = held
+		local spread = prior.spread
+		if after > 0 then
+			local drift = state.beliefs[("drift|%s"):format(quantity)]
+			if drift ~= nil then
+				looking = math.clamp(held + drift.v * after, 0, 1)
+				spread = math.sqrt(spread * spread + (drift.s * after) * (drift.s * after))
+			end
+		end
+
+		local want = prior.value - looking
 		if want == 0 then
 			continue
 		end
-		local spread = math.max(prior.spread, 1e-4) / state.precision(quantity)
+		spread = math.max(spread, 1e-4) / state.precision(quantity)
 		local salience = math.abs(want) / spread
 		if salience < FLOOR then
 			continue
@@ -68,7 +86,7 @@ function Think.selfErrors(state: any, out: { Error })
 			spread = spread,
 			salience = salience,
 			subject = nil,
-			after = 0,
+			after = after,
 			kind = nil,
 		})
 	end
@@ -218,6 +236,55 @@ function Think.resolveTarget(
 	return nil, needKey
 end
 
+-- The predictions actually in play for an action: what the action itself authored, overlaid
+-- with what this creature's species `believes` about it. A `believes` entry replaces the
+-- action's entry for the same (of, quantity) and is otherwise added -- which is how an action
+-- that predicts nothing on its own, like `vocalise`, can still predict relief from grief.
+-- Merged once per creature and cached, since neither side changes after spawn.
+function Think.predictsOf(state: any, action: Registry.Action): { any }
+	local cached = state.actionPredicts[action.name]
+	if cached ~= nil then
+		return cached
+	end
+	local believed = state.believes[action.name]
+	local merged: { any }
+	if believed == nil or #believed == 0 then
+		merged = action.predicts
+	else
+		merged = {}
+		local slotOf: { [string]: number } = {}
+		for _, predicted in action.predicts do
+			table.insert(merged, predicted)
+			slotOf[predicted.of .. "|" .. predicted.quantity] = #merged
+		end
+		for _, predicted in believed do
+			local at = slotOf[predicted.of .. "|" .. predicted.quantity]
+			if at ~= nil then
+				merged[at] = predicted
+			else
+				table.insert(merged, predicted)
+				slotOf[predicted.of .. "|" .. predicted.quantity] = #merged
+			end
+		end
+	end
+	state.actionPredicts[action.name] = merged
+	return merged
+end
+
+-- `when` narrows a belief to a circumstance. Only `target = "blamed"` is defined; a prediction
+-- carrying any other condition does not apply rather than applying unconditionally, so an
+-- unrecognised condition can never make a creature act on something it never meant.
+function Think.whenHolds(state: any, predicted: any, target: any): boolean
+	local when = predicted.when
+	if when == nil then
+		return true
+	end
+	if when.target == "blamed" then
+		return target ~= nil and state.blamed == target
+	end
+	return false
+end
+
 function Think.actionBelief(state: any, action: Registry.Action, predicted: any): (any, string)
 	local key = ("action|%s|%s|%s"):format(action.name, predicted.of, predicted.quantity)
 	local spread = predicted.expr.spread
@@ -229,10 +296,20 @@ function Think.actionBelief(state: any, action: Registry.Action, predicted: any)
 	return state.hold(key, predicted.expr.const or 0, spread, "action:" .. action.name), key
 end
 
-function Think.cancelsSelf(reg: Registry.Registry, state: any, action: Registry.Action, err: Error, look: (string) -> (number?, number)): (number, number)
+function Think.cancelsSelf(
+	reg: Registry.Registry,
+	state: any,
+	action: Registry.Action,
+	err: Error,
+	look: (string) -> (number?, number),
+	target: any
+): (number, number)
 	local total, spread = 0, 0
-	for _, predicted in action.predicts do
+	for _, predicted in Think.predictsOf(state, action) do
 		if predicted.of ~= "self" or predicted.quantity ~= err.quantity then
+			continue
+		end
+		if not Think.whenHolds(state, predicted, target) then
 			continue
 		end
 		local held = Think.actionBelief(state, action, predicted)
@@ -326,6 +403,35 @@ function Think.cancelsThreat(
 		return 0, 0
 	end
 	return math.min(gained, err.amount), math.sqrt(spread * spread + trust * trust)
+end
+
+-- How much the creature does not know about what this action does, as 0..1: the widest spread it
+-- holds on any of the action's own predictions, against the same yardstick Emotions measures
+-- novelty by, so "unsure" means the same thing wherever the package says it.
+--
+-- Deliberately not measured against the AUTHORED spread. That reads 1 for every belief the moment
+-- it is created, so a creature would find everything equally mysterious and the term would say
+-- nothing. What matters is how loosely the belief is held now, full stop.
+local UNSURE_SCALE = 0.5
+
+-- Below this an option counts as known, and is not worth an experiment. Without a floor any spread
+-- at all reads as a little bit unknown, so a venturing creature would fidget forever over options
+-- it has entirely settled. Same shape as the rule that an error inside its own spread is not
+-- evidence: uncertainty too small to matter is not uncertainty.
+local UNSURE_FLOOR = 0.15
+
+function Think.unknownOf(state: any, action: Registry.Action): number
+	local worst = 0
+	for _, predicted in Think.predictsOf(state, action) do
+		local key = ("action|%s|%s|%s"):format(action.name, predicted.of, predicted.quantity)
+		local held = state.beliefs[key]
+		local spread = if held ~= nil then held.s else predicted.expr.spread
+		local reading = math.clamp(spread / UNSURE_SCALE, 0, 1)
+		if reading > worst then
+			worst = reading
+		end
+	end
+	return if worst < UNSURE_FLOOR then 0 else worst
 end
 
 function Think.costPressure(state: any, action: Registry.Action): number

@@ -18,6 +18,10 @@ local SPECS: { [string]: any } = {
 	CreditSpec = require("../test/CreditSpec"),
 	MindSpec = require("../test/MindSpec"),
 	AcquireSpec = require("../test/AcquireSpec"),
+	ActionLearnSpec = require("../test/ActionLearnSpec"),
+	ForesightSpec = require("../test/ForesightSpec"),
+	VentureSpec = require("../test/VentureSpec"),
+	CuriositySpec = require("../test/CuriositySpec"),
 }
 
 local failures: { string } = {}
