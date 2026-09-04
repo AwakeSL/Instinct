@@ -127,6 +127,7 @@ local function totalsOf(w)
 	return { 0, 0, w.eaten }
 end
 
+local PROF = { think = 0, nthink = 0 }
 -- reference policies
 local function randomPicks()
 	local p
@@ -146,6 +147,27 @@ local function refEpisode(policy)
 	return w.eaten * PREF.eaten
 end
 
+
+-- ------------------------------------------------------------------ confidence-gated value (VGATE=1)
+-- The effects path already discounts a belief by how well it is earned (`optionEffect` multiplies by
+-- RLS.confidence). The value path does not: `valueOf` calls predict raw, so a newborn with n < 30 acts on
+-- pure noise at full strength. VGATE=1 gates the value the same way the physics is gated. With every
+-- reading unearned the value is flat, so the creature spreads over the feasible combinations instead of
+-- chasing whichever way the noise happens to point.
+local RLSmod = require("../mind/RLS")
+if process.env.VGATE == "1" then
+	function Mind.valueOf(self, phi)
+		local O, v = self.O, 0
+		for k = 1, self.NRO do
+			local w = self.pref[k]
+			if w ~= 0 then
+				v += w * RLSmod.confidence(O, k) * RLSmod.predict(O, k, phi)
+			end
+		end
+		return v
+	end
+end
+
 -- ------------------------------------------------------------------ the creature
 local GROUPS = Senses.groups(SLOTS, { "timeLeft", "armed" })
 local BLOCKS = if process.env.BLOCKS == "1" then GROUPS else nil
@@ -156,9 +178,11 @@ local function episode(learn)
 	local w = newWorld()
 	local tick = 0
 	while w.t < R.length do
+		local _tA = os.clock()
 		local picks, x, phi, event = mind:think(function()
 			return senses(w)
 		end, feasible)
+		PROF.think += os.clock() - _tA; PROF.nthink += 1
 		if learn then
 			mind:note(x, phi, picks, event, totalsOf(w), tick)
 		end

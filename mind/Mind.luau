@@ -64,6 +64,9 @@ function Mind.new(nIn: number, choices: { any }, o: any)
 	self.H = o.horizon or 24 -- ticks a row waits before it is judged
 	self.STEP = o.step or 12 -- ticks between an effects row and its answer
 	self.ridge = o.ridge or (if o.sparse == true then 4 else 1)
+	-- the outcome model's own ridge: the pooled value needs a strong one (the absent slots of the raw layout were
+	-- an accidental ridge); the physics models want 1
+	self.valueRidge = o.valueRidge or (if o.pooledValue == true then 30 else self.ridge)
 	self.extraRidge = o.extraRidge or 20 -- the tight prior of couplings, hazards and acquired inputs
 	self.readings = o.readings or { "dealt", "taken" }
 	self.NRO = #self.readings
@@ -103,6 +106,30 @@ function Mind.new(nIn: number, choices: { any }, o: any)
 	self.nExtra = (if self.has.C then nIn else 0) + self.nHaz + self.nTrace + (if self.trend then nIn else 0)
 	self.groups = o.groups or o.blocks
 	self.nX = nIn + self.nExtra
+	self.pooledValue = o.pooledValue == true and self.groups ~= nil and #self.groups >= 2
+	self.nXO = self.nX -- the senses as the outcome model sees them
+	self.nPool = 0
+	if self.pooledValue then
+		self.poolSelf = self.groups[1]
+		self.poolSlots = {}
+		for g = 2, #self.groups do
+			table.insert(self.poolSlots, self.groups[g])
+		end
+		self.poolSize = #self.groups[2]
+		self.poolKinds = math.min(#self.poolSlots, 6)
+		self.nXO = #self.poolSelf
+		self.poolCopies = { 0 }
+		local off = nIn
+		if self.has.C then
+			table.insert(self.poolCopies, off)
+			off += nIn
+		end
+		if self.trend then
+			table.insert(self.poolCopies, off)
+			off += nIn
+		end
+		self.nPool = self.poolSize * (self.poolKinds * #self.poolCopies + nOpt)
+	end
 	-- DESCRIPTORS: o.descriptors[optionIndex] = { d1..dD } (o.descrDim = D), for the options that have
 	-- one (acts, usually). An option then enters the value through its descriptor, plus the descriptor's
 	-- interactions with the senses in o.descrSenses (default all), as well as through its own flag: options
@@ -123,9 +150,9 @@ function Mind.new(nIn: number, choices: { any }, o: any)
 		end
 	end
 	self.nDescr = if self.descr then self.descrDim * (1 + #self.descrSenses) else 0
-	self.FO = 1 + self.nX + nOpt + self.nDescr
-	self.O = RLS.new(self.FO, self.NRO, self.ridge)
-	for i = 1 + nIn + 1, 1 + self.nX do
+	self.FO = 1 + self.nXO + nOpt + self.nPool + self.nDescr
+	self.O = RLS.new(self.FO, self.NRO, self.valueRidge)
+	for i = 1 + nIn + 1, 1 + self.nXO do
 		self.O.P[i][i] = 1 / self.extraRidge
 	end
 	-- SPARSE (o.sparse = true, with o.groups from Senses.groups): a slot whose "there" reading is 0 is skipped
@@ -197,7 +224,7 @@ function Mind.new(nIn: number, choices: { any }, o: any)
 	end
 	if self.descr then
 		-- the private flags start tight when descriptors carry the load
-		for f = self.nX + 2, self.nX + 1 + nOpt do
+		for f = self.nXO + 2, self.nXO + 1 + nOpt do
 			self.O.P[f][f] = 1 / self.extraRidge
 		end
 	end
@@ -466,15 +493,48 @@ end
 function Mind:phiO(X: { number }, picks: { number }, out: { number }?): { number }
 	local phi = out or {}
 	phi[1] = 1
-	for i = 1, self.nX do
-		phi[i + 1] = X[i]
+	if self.pooledValue then
+		for q, i in ipairs(self.poolSelf) do
+			phi[q + 1] = X[i]
+		end
+	else
+		for i = 1, self.nX do
+			phi[i + 1] = X[i]
+		end
 	end
-	local k = self.nX + 1
+	local k = self.nXO + 1
 	for ci, c in ipairs(self.choices) do
 		for oo = 1, #c.options do
 			k += 1
 			phi[k] = if picks[ci] == oo then 1 else 0
 		end
+	end
+	if self.pooledValue then
+		local size, kinds, nOpt = self.poolSize, self.poolKinds, self.nOpt
+		local base = k
+		for q = 1, self.nPool do
+			phi[base + q] = 0
+		end
+		local copies = self.poolCopies
+		local nc = #copies
+		for g, B in ipairs(self.poolSlots) do
+			if X[B[1]] ~= 0 then
+				local kind = math.min(g, kinds) - 1
+				for c, off in ipairs(copies) do
+					local kb = base + (kind * nc + (c - 1)) * size
+					for q, i in ipairs(B) do
+						phi[kb + q] += X[off + i] or 0
+					end
+				end
+				for ci = 1, #self.choices do
+					local ob = base + kinds * nc * size + (self.optIndex[ci][picks[ci]] - 1) * size
+					for q, i in ipairs(B) do
+						phi[ob + q] += X[i]
+					end
+				end
+			end
+		end
+		k = base + self.nPool
 	end
 	if self.descr then
 		local D = self.descrDim
@@ -1024,7 +1084,7 @@ end
 -- A settled row joins the recent record (raw inputs and readings) for the search.
 local function remember(self, phi: { number }, y: { number })
 	local raw = {}
-	local nRaw = self.nX + self.nOpt
+	local nRaw = self.nXO + self.nOpt + self.nPool
 	for i = 1, nRaw do
 		raw[i] = phi[i + 1]
 	end
@@ -1213,16 +1273,16 @@ end
 function Mind:rebirth()
 	local F, NR = self.O.F, self.O.NR
 	local blocks = self.O.blocks
-	self.O = RLS.new(F, NR, self.ridge)
+	self.O = RLS.new(F, NR, self.valueRidge)
 	self.O.blocks = blocks
-	for i = 1 + self.nIn + 1, 1 + self.nX do
+	for i = 1 + self.nIn + 1, 1 + self.nXO do
 		self.O.P[i][i] = 1 / self.extraRidge
 	end
 	for q = 1, #self.acquired do
 		self.O.P[self.FO + q][self.FO + q] = 1 / self.extraRidge
 	end
 	if self.descr then
-		for f = self.nX + 2, self.nX + 1 + self.nOpt do
+		for f = self.nXO + 2, self.nXO + 1 + self.nOpt do
 			self.O.P[f][f] = 1 / self.extraRidge
 		end
 	end
@@ -1235,7 +1295,7 @@ end
 -- the row's residual for each chosen option that has a descriptor, at a rate that fades as its rows mount.
 function Mind:descrStep(r, y: { number })
 	local O, D = self.O, self.descrDim
-	local base = 1 + self.nX + self.nOpt
+	local base = 1 + self.nXO + self.nOpt + self.nPool
 	local score, predicted = 0, self:valueOf(r.phi)
 	for q = 1, self.NRO do
 		score += self.pref[q] * y[q]
@@ -1285,7 +1345,7 @@ function Mind:acquire()
 		table.insert(rows, all[k])
 	end
 	local R = #rows
-	local nRaw = self.nX + self.nOpt
+	local nRaw = self.nXO + self.nOpt + self.nPool
 	-- the residuals to chase: the value's, and the worst reading's
 	local targets = { { name = "value", res = {} } }
 	if self.acqReading then
@@ -1293,20 +1353,33 @@ function Mind:acquire()
 	end
 	local phi, Xr, pk = {}, {}, {}
 	for k, r in ipairs(rows) do
-		for i = 1, self.nX do
-			Xr[i] = r.raw[i]
-		end
-		local q = self.nX
-		for ci, c in ipairs(self.choices) do
-			pk[ci] = 1
-			for oo = 1, #c.options do
-				q += 1
-				if r.raw[q] == 1 then
-					pk[ci] = oo
+		if self.pooledValue then
+			-- the row's inputs are stored whole; only the acquired inputs are recomputed
+			phi[1] = 1
+			for i = 1, nRaw do
+				phi[i + 1] = r.raw[i]
+			end
+			local kk = self.FO
+			for _, a in ipairs(self.acquired) do
+				kk += 1
+				phi[kk] = OPS[a.op](phi[a.i + 1], phi[a.j + 1])
+			end
+		else
+			for i = 1, self.nX do
+				Xr[i] = r.raw[i]
+			end
+			local q = self.nX
+			for ci, c in ipairs(self.choices) do
+				pk[ci] = 1
+				for oo = 1, #c.options do
+					q += 1
+					if r.raw[q] == 1 then
+						pk[ci] = oo
+					end
 				end
 			end
+			self:phiO(Xr, pk, phi)
 		end
-		self:phiO(Xr, pk, phi)
 		for _, t in ipairs(targets) do
 			if t.q then
 				t.res[k] = r.y[t.q] - RLS.predict(self.O, t.q, phi)
@@ -1465,7 +1538,7 @@ function Mind:featureIndex(name: string, names: { string }): number?
 			return i + 1
 		end
 	end
-	local k = 1 + self.nX
+	local k = 1 + self.nXO
 	for _, c in ipairs(self.choices) do
 		for _, o in ipairs(c.options) do
 			k += 1
@@ -1480,7 +1553,7 @@ function Mind:featureIndex(name: string, names: { string }): number?
 		end
 	end
 	if self.descr then
-		local base = 1 + self.nX + self.nOpt
+		local base = 1 + self.nXO + self.nOpt + self.nPool
 		local q = tonumber(name:match("^tag(%d+)$"))
 		if q and q >= 1 and q <= self.descrDim then
 			return base + q
@@ -1503,7 +1576,7 @@ function Mind:descrFeatureName(f: number, names: { string }): string?
 	if not self.descr then
 		return nil
 	end
-	local base = 1 + self.nX + self.nOpt
+	local base = 1 + self.nXO + self.nOpt + self.nPool
 	if f > base and f <= base + self.descrDim then
 		return "tag" .. (f - base)
 	end
@@ -1520,7 +1593,7 @@ function Mind:inputName(i: number, names: { string }): string
 	if i <= self.nIn then
 		return names[i]
 	end
-	local k = self.nX
+	local k = self.nXO
 	for _, c in ipairs(self.choices) do
 		for _, o in ipairs(c.options) do
 			k += 1
@@ -1624,7 +1697,7 @@ function Mind:distill(names: { string }, top: number?, conf: number?, nMem: numb
 		if f >= 2 and f <= 1 + self.nIn then
 			return names[f - 1]
 		end
-		if f > 1 + self.nX and f <= self.FO then
+		if f > 1 + self.nXO and f <= 1 + self.nXO + self.nOpt then
 			return self:inputName(f - 1, names)
 		end
 		if f > self.FO and self.acquired[f - self.FO] then
@@ -1717,7 +1790,7 @@ function Mind:load(saved)
 		table.insert(self.acquired, { op = a.op, i = a.i, j = a.j, c = a.c, forReading = a.forReading })
 	end
 	local blocks = self.O.blocks
-	self.O = RLS.load(saved.O, self.ridge)
+	self.O = RLS.load(saved.O, self.valueRidge)
 	if blocks then
 		-- the acquired inputs' block must cover whatever was loaded
 		local last = blocks[#blocks]

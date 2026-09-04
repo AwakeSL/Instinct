@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.4
+
+- **Learning flat in the sense count, as options.** `equivariant = true` (with `groups`): one effects law per
+  option for the self readings and one shared across every slot, both reading a pooled summary of the present
+  slots by kind; held-out 155/815/216/152 against 187/704/314/207, settle 8.9 -> 2.4 ms at 318 senses (FINDINGS
+  80). `pooledValue = true`: the outcome model's slot inputs are sums over present slots of field-by-kind and
+  field-by-option terms, a fixed size whatever the slot count; with the equivariant effects, held-out 140/774/352/122
+  (FINDINGS 81). `valueRidge` (30 with the pooled value) is separate from `ridge` (1 for the physics): sharing
+  one number between them breaks learning (FINDINGS 82). The slot-equivariant effects were proposed in
+  docs/IDEAS.md by another model.
+
 ## 0.5.3
 
 - **Linear-cost learning, as options.** `blocks` (effects and couplings local to a slot's group and the self,
