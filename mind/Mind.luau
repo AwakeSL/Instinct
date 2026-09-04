@@ -106,6 +106,12 @@ function Mind.new(nIn: number, choices: { any }, o: any)
 	self.memRadius = o.memRadius or 0.35 * math.sqrt(nIn / 14) * 2
 	self.memTries = o.memTries or 4
 	self.reps = o.reps or 3 -- extra updates for a surprising good row
+	-- ROW WEIGHTS (Bingo's rows in the ledger): consecutive outcome rows share H-1 of their H ticks and effects
+	-- rows STEP-1 of STEP, so each carries about 1/H (1/STEP) of an independent row's evidence; weighting them
+	-- so keeps the covariance honest and the creature plastic. o.calibrated = true weights both; o.rowWeight and
+	-- o.effectsRowWeight set either directly.
+	self.rowWeight = o.rowWeight or (if o.calibrated then 1 / self.H else nil)
+	self.effectsRowWeight = o.effectsRowWeight or (if o.calibrated then 1 / self.STEP else nil)
 	self.eps = 0 -- chance of a random feasible combination instead of the best (the coach sets it)
 	self.sticky = o.sticky or 0.9 -- while exploring, the chance of holding the last random combination another tick
 	self.nudgeAfter = o.nudgeAfter or 10 -- decisions with unchanged senses before the creature tries something else
@@ -1616,7 +1622,7 @@ function Mind:settle(totals: { number }, xNow: { number }, tick: number, over: b
 				local phiS, dyS = {}, {}
 				for ci = 1, #self.choices do
 					local k = self.optIndex[ci][r.picks[ci]]
-					RLS.update(self.EG[k], phiG, dyG)
+					RLS.update(self.EG[k], phiG, dyG, nil, self.effectsRowWeight)
 					local S = self.ES[k]
 					for g, B in ipairs(self.eqSlots) do
 						if X[B[1]] ~= 0 and xNow[B[1]] ~= 0 then
@@ -1624,7 +1630,7 @@ function Mind:settle(totals: { number }, xNow: { number }, tick: number, over: b
 							for q, i in ipairs(B) do
 								dyS[q] = xNow[i] - X[i]
 							end
-							RLS.update(S, phiS, dyS)
+							RLS.update(S, phiS, dyS, nil, self.effectsRowWeight)
 						end
 					end
 				end
@@ -1640,7 +1646,7 @@ function Mind:settle(totals: { number }, xNow: { number }, tick: number, over: b
 					if copies then
 						self:markAbsent(m, r.X, copies)
 					end
-					RLS.update(m, phi, dy)
+					RLS.update(m, phi, dy, nil, self.effectsRowWeight)
 				end
 			else
 				table.insert(keep, r)
@@ -1720,7 +1726,7 @@ function Mind:settle(totals: { number }, xNow: { number }, tick: number, over: b
 			if self.sparse then
 				self:markAbsent(self.O, r.x, self:senseCopies())
 			end
-			RLS.update(self.O, r.phi, y, reps)
+			RLS.update(self.O, r.phi, y, reps, self.rowWeight)
 			if self.descr and self.descrLearn > 0 then
 				self:descrStep(r, y)
 			end
@@ -2083,6 +2089,9 @@ function Mind:descrFeatureName(f: number, names: { string }): string?
 end
 
 function Mind:inputName(i: number, names: { string }): string
+	if self.R and i <= self.nIn then
+		return "code" .. i
+	end
 	if self.pooledValue then
 		if i <= self.nXO then
 			return names[self.poolSelf[i]]
@@ -2230,19 +2239,19 @@ function Mind:teach(k, names: { string })
 		return
 	end
 	-- the design: the origin and each named sense's direction, under neutral picks and each named option
+	-- every sense's direction, named or not (an unnamed one must be taught to count for nothing: the code has
+	-- fewer numbers than there are senses, so a value on the code answers to every sense a little, and the fit
+	-- spreads that leak as thin as it can), and mixes of them all
 	local xs = { table.create(nRaw, 0) }
-	local named = {}
-	for si in pairs(senses) do
+	for si = 1, nRaw do
 		local x = table.create(nRaw, 0)
 		x[si] = 1
 		table.insert(xs, x)
-		table.insert(named, si)
 	end
-	-- and mixes of the named senses, so the pairs learn to answer their own sense only
 	local state = 7
-	for _ = 1, 4 * #named do
+	for _ = 1, 2 * nRaw do
 		local x = table.create(nRaw, 0)
-		for _, si in ipairs(named) do
+		for si = 1, nRaw do
 			state = (state * 1664525 + 1013904223) % 4294967296
 			x[si] = (state // 65536) / 32768 - 1
 		end
@@ -2254,10 +2263,13 @@ function Mind:teach(k, names: { string })
 		pk[co[1]] = co[2]
 		table.insert(pickSets, pk)
 	end
-	local n0 = O.n
-	local reps = 0
+	-- fitted on a scratch model at a slight ridge, so the design is matched rather than shrunk; only the
+	-- weights are taken. The creature's own covariance is left as born, so what it is taught stays a prior
+	-- that a few dozen rows can overturn (teaching into its covariance made it deaf to the world).
+	local scratch = RLS.new(O.F, self.NRO, 0.01)
+	local conf = 0
 	for _, t in ipairs(terms) do
-		reps = math.max(reps, math.round(t.conf))
+		conf = math.max(conf, t.conf)
 	end
 	for _, x in ipairs(xs) do
 		local X = self:extend(self:encode(x))
@@ -2267,11 +2279,20 @@ function Mind:teach(k, names: { string })
 			for _, t in ipairs(terms) do
 				y[t.r] += t.w * eval(t.t, x, pk)
 			end
-			RLS.update(O, phi, y, math.max(1, reps) * 8) -- counted well past the ridge, so the design is fitted rather than shrunk
+			RLS.update(scratch, phi, y)
 			self.stats.priors = (self.stats.priors or 0) + 1
 		end
 	end
-	O.n = n0 -- taught, not experienced: the row count stays what the creature has seen
+	for r = 1, self.NRO do
+		local w, sw = O.W[r], scratch.W[r]
+		for f = 1, O.F do
+			w[f] = sw[f]
+		end
+	end
+	-- and the taught pairs start as sure as the instinct says, as a declared prior would
+	for f = self.FO + 1, O.F do
+		O.P[f][f] = math.min(O.P[f][f], 1 / math.max(conf, 1))
+	end
 	self.lastThinkX = nil
 end
 

@@ -167,8 +167,25 @@ end
 -- ------------------------------------------------------------------ the creature
 local GROUPS = Senses.groups(SLOTS, { "timeLeft", "armed" })
 local BLOCKS = if process.env.BLOCKS == "1" then GROUPS else nil
-local mind = Mind.new(#NAMES, CHOICES, { set = "OMECA", code = tonumber(process.env.CODE), readings = READINGS, pref = PREF, horizon = 24, step = 12, beam = 10, blocks = BLOCKS, groups = GROUPS, sparse = process.env.SPARSE == "1", equivariant = process.env.EQUIV == "1", pooledValue = process.env.POOL == "1" })
+local mind = Mind.new(#NAMES, CHOICES, { set = "OMECA", code = tonumber(process.env.CODE), calibrated = process.env.CALIB == "1", readings = READINGS, pref = PREF, horizon = 24, step = 12, beam = 10, blocks = BLOCKS, groups = GROUPS, sparse = process.env.SPARSE == "1", equivariant = process.env.EQUIV == "1", pooledValue = process.env.POOL == "1" })
 local coach = Coach.new(mind, { explore = 5, every = 10, floor = nil })
+-- INSTINCTS=1: born with the forage instincts (the place's Instincts.forage, in this world's names)
+if process.env.INSTINCTS == "1" then
+	mind:learnFrom({
+		priors = {
+			{ reading = "eaten", feature = "itemthere", w = 3, conf = 3 },
+			{ reading = "eaten", feature = "itemdist", w = -4, conf = 3 },
+			{ reading = "eaten", feature = "itemclosing", w = 2, conf = 3 },
+			{ reading = "eaten", feature = "mul(move=approach,itemthere)", w = 3, conf = 3 },
+			{ reading = "eaten", feature = "mul(target=item,itemthere)", w = 3, conf = 3 },
+		},
+		features = {
+			{ op = "mul", a = "move=approach", b = "itemthere" },
+			{ op = "mul", a = "target=item", b = "itemthere" },
+		},
+	}, NAMES)
+	print(("instincts: %d priors placed, %d features"):format(mind.stats.priors or 0, #mind.acquired))
+end
 
 local function episode(learn)
 	local w = newWorld()
@@ -233,7 +250,7 @@ print(("RESULT world %d: %s, last 10 episodes %.0f (greedy %.0f), %.0f us a thin
 
 -- save and reload: the creature is itself afterwards
 local saved = mind:save()
-local again = Mind.new(#NAMES, CHOICES, { set = "OMECA", code = tonumber(process.env.CODE), readings = READINGS, pref = PREF, horizon = 24, step = 12, beam = 10, blocks = BLOCKS, groups = GROUPS, sparse = process.env.SPARSE == "1", equivariant = process.env.EQUIV == "1", pooledValue = process.env.POOL == "1" })
+local again = Mind.new(#NAMES, CHOICES, { set = "OMECA", code = tonumber(process.env.CODE), calibrated = process.env.CALIB == "1", readings = READINGS, pref = PREF, horizon = 24, step = 12, beam = 10, blocks = BLOCKS, groups = GROUPS, sparse = process.env.SPARSE == "1", equivariant = process.env.EQUIV == "1", pooledValue = process.env.POOL == "1" })
 again:load(saved)
 again.exploring = false
 local check = 0

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.1
+
+- Teaching instincts to a code: fitted on a scratch model and only the weights taken (teaching into the
+  creature's own covariance made it deaf to the world), over every sense's direction so unnamed senses count
+  for nothing. A code has fewer numbers than senses, so a taught value is blurred (about half the declared
+  slopes, a little leaking onto every sense): use the dense or flat mind where instincts matter, and the code
+  for a creature that learns from nothing. Row weights: `calibrated = true` (outcome rows 1/H, effects rows
+  1/STEP), or `rowWeight` / `effectsRowWeight`; `RLS.update` takes a `weight` beside `reps`.
+- Code inputs are named `code1..B`.
+
 ## 0.6.0
 
 - `code = B` (with `codeSeed`): the senses are read through a fixed random code of B numbers and every tier

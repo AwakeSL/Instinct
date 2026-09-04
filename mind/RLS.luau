@@ -180,7 +180,9 @@ end
 -- One row: inputs phi, outputs y. Every output shares the gain, so the covariance is updated once.
 -- One row of evidence. `reps` counts the row that many times, in closed form (k identical updates are one
 -- update with denominator 1 + k phi'P phi and gain k P phi / that: the same weights and covariance).
-function RLS.update(m: Model, phi: { number }, y: { number }, reps: number?)
+-- `weight` scales the row's evidence without changing its count: 1/H for a row whose target overlaps the next
+-- row's over H ticks (overlapping returns), so the covariance stays honest about what it has seen.
+function RLS.update(m: Model, phi: { number }, y: { number }, reps: number?, weight: number?)
 	if m.blocks then
 		updateBlocks(m, phi, y)
 		return
@@ -190,7 +192,8 @@ function RLS.update(m: Model, phi: { number }, y: { number }, reps: number?)
 		return
 	end
 	local F, P = m.F, m.P
-	local k = reps or 1
+	local reps1 = reps or 1
+	local k = reps1 * (weight or 1)
 	local Pphi = table.create(F, 0)
 	-- the inputs that are not zero: absent slots and unpicked options read zero, and a zero term is skipped
 	-- exactly (the index list pays only when a fair share of the inputs are zero)
@@ -244,7 +247,7 @@ function RLS.update(m: Model, phi: { number }, y: { number }, reps: number?)
 				e -= w[i] * phi[i]
 			end
 		end
-		for _ = 1, k do
+		for _ = 1, reps1 do
 			m.mean[r] = 0.99 * m.mean[r] + 0.01 * target
 			m.err[r] = 0.99 * m.err[r] + 0.01 * e * e
 			m.var[r] = 0.99 * m.var[r] + 0.01 * (target - m.mean[r]) ^ 2
@@ -265,7 +268,7 @@ function RLS.update(m: Model, phi: { number }, y: { number }, reps: number?)
 			P[j][i] = v
 		end
 	end
-	m.n += k
+	m.n += reps1
 end
 
 function RLS.predict(m: Model, r: number, phi: { number }): number
