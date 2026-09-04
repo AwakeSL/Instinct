@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.8
+
+- Fix: under `pooledValue` instinct names (`learnFrom`) resolved slot senses to the wrong inputs; they now land
+  on the pooled field of the slot's kind, and pooled inputs are named after the slot senses they pool, so pair
+  features and their priors are found. `scripts/check_instincts.luau` checks both layouts.
+
 ## 0.5.7
 
 - Three exact shortcuts in `RLS.update` (Bingo's rows in the ledger): zero inputs are skipped in the matvec

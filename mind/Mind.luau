@@ -1919,7 +1919,23 @@ end
 function Mind:featureIndex(name: string, names: { string }): number?
 	for i, n in ipairs(names) do
 		if n == name then
-			return i + 1
+			if not self.pooledValue then
+				return i + 1
+			end
+			-- under the pooled value the self readings keep their place and a slot sense is the raw copy of its
+			-- field pooled by its slot's kind
+			local q = table.find(self.poolSelf, i)
+			if q then
+				return q + 1
+			end
+			for g, B in ipairs(self.poolSlots) do
+				local f = table.find(B, i)
+				if f then
+					local kind = math.min(g, self.poolKinds) - 1
+					return 1 + self.nXO + self.nOpt + kind * #self.poolCopies * self.poolSize + f
+				end
+			end
+			return nil
 		end
 	end
 	local k = 1 + self.nXO
@@ -1974,7 +1990,21 @@ function Mind:descrFeatureName(f: number, names: { string }): string?
 end
 
 function Mind:inputName(i: number, names: { string }): string
-	if i <= self.nIn then
+	if self.pooledValue then
+		if i <= self.nXO then
+			return names[self.poolSelf[i]]
+		end
+		local r = i - self.nXO - self.nOpt
+		local size, nc = self.poolSize, #self.poolCopies
+		if r >= 1 and r <= self.poolKinds * nc * size then
+			-- a field pooled by kind: named after the first slot of that kind (its raw copy bare)
+			local kind = (r - 1) // (nc * size)
+			local c = ((r - 1) % (nc * size)) // size
+			local f = (r - 1) % size + 1
+			local n = names[self.poolSlots[kind + 1][f]]
+			return if c == 0 then n else "copy" .. c .. ":" .. n
+		end
+	elseif i <= self.nIn then
 		return names[i]
 	end
 	local k = self.nXO
