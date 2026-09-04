@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.2
+
+- **A nudge.** Ten decisions in a row with unchanged senses (a body against a wall) and the creature tries one
+  other combination, in any phase; while exploring, a held random move is re-rolled the moment the senses stop
+  changing. Both came out of the first creature that had to look for its food.
+- **Effects cache.** Each option's predicted change of the senses is computed once per think and summed per
+  candidate, instead of re-predicted for every candidate in the beam.
+- Curious pairs no longer force a feature search before the creature has a thousand rows.
+
 ## 0.5.1
 
 - **Descriptors.** `o.descriptors[optionIndex] = { ... }` with `o.descrDim` gives options (acts, usually) a

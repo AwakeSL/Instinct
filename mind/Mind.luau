@@ -84,6 +84,8 @@ function Mind.new(nIn: number, choices: { any }, o: any)
 	self.reps = o.reps or 3 -- extra updates for a surprising good row
 	self.eps = 0 -- chance of a random feasible combination instead of the best (the coach sets it)
 	self.sticky = o.sticky or 0.9 -- while exploring, the chance of holding the last random combination another tick
+	self.nudgeAfter = o.nudgeAfter or 10 -- decisions with unchanged senses before the creature tries something else
+	self.sameFor = 0
 	self.exploring = true -- false while a creature is being checked rather than taught
 	local nOpt = 0
 	for _, c in ipairs(choices) do
@@ -306,25 +308,50 @@ end
 
 -- The senses one step on, if these picks are held: the sum of the options' effects, each counted
 -- as much as its model has earned. Returns the next senses and the mean confidence behind them.
-function Mind:stepAhead(X: { number }, picks: { number }, out: { number }?): ({ number }, number)
+-- Each option's predicted, confidence-weighted change of the senses on inputs X, computed once per think and
+-- summed per candidate: the beam then costs a vector sum per candidate instead of a prediction per option.
+local function optionEffect(self, cache, k: number, X: { number }, phi: { number })
+	local e = cache[k]
+	if e then
+		return e
+	end
+	local m = self.E[k]
+	local d = table.create(self.nIn, 0)
+	local total = 0
+	if m.n > 0 then
+		for i = 1, self.nIn do
+			local c = RLS.confidence(m, i)
+			if c > 0 then
+				d[i] = c * RLS.predict(m, i, phi)
+			end
+			total += c
+		end
+	end
+	e = { d = d, conf = if m.n > 0 then total / self.nIn else 0 }
+	cache[k] = e
+	return e
+end
+
+function Mind:stepAhead(X: { number }, picks: { number }, out: { number }?, cache: any?): ({ number }, number)
 	local nxt = out or {}
 	for i = 1, self.nIn do
 		nxt[i] = X[i]
 	end
-	local phi = self:phiE(X)
+	cache = cache or {}
+	local phi = cache.phi
+	if not phi then
+		phi = self:phiE(X)
+		cache.phi = phi
+	end
 	local total, count = 0, 0
 	for ci = 1, #self.choices do
-		local m = self.E[self.optIndex[ci][picks[ci]]]
-		if m.n > 0 then
-			for i = 1, self.nIn do
-				local c = RLS.confidence(m, i)
-				if c > 0 then
-					nxt[i] += c * RLS.predict(m, i, phi)
-				end
-				total += c
-				count += 1
-			end
+		local e = optionEffect(self, cache, self.optIndex[ci][picks[ci]], X, phi)
+		local d = e.d
+		for i = 1, self.nIn do
+			nxt[i] += d[i]
 		end
+		total += e.conf
+		count += 1
 	end
 	return nxt, if count > 0 then total / count else 0
 end
@@ -471,18 +498,60 @@ function Mind:think(sensesOf, feasible)
 			return a.v > b.v
 		end)
 		local nxt = {}
+		local caches = {} -- one effects cache per target option's senses
 		for k = 1, math.min(self.beam, #scored) do
 			local s = scored[k]
-			local _, conf = self:stepAhead(Xs[s.p[1]], s.p, nxt)
+			local a = s.p[1]
+			local cache = caches[a]
+			if not cache then
+				cache = {}
+				caches[a] = cache
+			end
+			local _, conf = self:stepAhead(Xs[a], s.p, nxt, cache)
 			local X2 = self:extend(nxt)
 			s.v += self.gamma * conf * self:worth(X2, s.p, phi, true)
+		end
+	end
+	-- STUCK: the senses have not moved for nudgeAfter decisions while it acts, so whatever it is doing does
+	-- nothing (a body against a wall). Repeating it teaches nothing; one random other combination is taken.
+	if self.exploring and self.nudgeAfter > 0 and #scored > 1 then
+		local lx = self.lastThinkX
+		local same = lx ~= nil
+		if same then
+			for i = 1, self.nIn do
+				if math.abs(x1[i] - lx[i]) > 1e-3 then
+					same = false
+					break
+				end
+			end
+		end
+		self.sameFor = if same then self.sameFor + 1 else 0
+		if self.sameFor >= self.nudgeAfter then
+			self.sameFor = 0
+			self.stats.nudged = (self.stats.nudged or 0) + 1
+			local s = scored[math.random(#scored)]
+			self.stickyPicks = s.p
+			return finish(table.clone(s.p), nil)
 		end
 	end
 	if self.eps > 0 and self.exploring and math.random() < self.eps then
 		-- a random combination, held for a while: re-rolling every tick cancels out into a jitter that
 		-- goes nowhere, and teaches the effects models nothing about what holding a move does
 		local p = self.stickyPicks
-		if p == nil or math.random() >= self.sticky or (feasible and not feasible(p)) then
+		-- a held move whose senses have not changed since the last decision (a body pinned on a wall) is
+		-- teaching nothing: re-roll it at once
+		local stuck = false
+		local lx = self.lastThinkX
+		if p ~= nil and lx ~= nil then
+			stuck = true
+			for i = 1, self.nIn do
+				if math.abs(x1[i] - lx[i]) > 1e-3 then
+					stuck = false
+					break
+				end
+			end
+		end
+		if p == nil or stuck or math.random() >= self.sticky or (feasible and not feasible(p)) then
 			p = scored[math.random(#scored)].p
 			self.stickyPicks = p
 		end
@@ -1126,7 +1195,7 @@ function Mind:learnFrom(k, names: { string })
 		end
 	end
 	if #self.curious > 0 then
-		self.acqEarly = 200
+		self.acqEarly = 1000 -- curious pairs are searched early, but not before there is anything to explain
 	end
 	for _, m in ipairs(k.memories or {}) do
 		local x, mask = table.create(self.nIn, 0), table.create(self.nIn, 0)
