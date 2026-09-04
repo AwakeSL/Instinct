@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.3
+
+- `centredFlags = true` (off by default): option flags read as (picked - 1/options). Measured paired: inside
+  the noise for the dense mind, slightly worse for the code (FINDINGS 87).
+- Headless harness envs: `CALIB=0`, `SEP=0`, `CENTRED=1`, `INSTINCTS=1`.
+
 ## 0.6.2
 
 - Row calibration on by default (`calibrated = false` to turn it off): outcome rows weighted 1/H and effects rows

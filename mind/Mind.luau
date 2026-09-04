@@ -98,6 +98,10 @@ function Mind.new(nIn: number, choices: { any }, o: any)
 	-- combinations come back (to rounding). Acquired features pairing two choices are the one exception and are
 	-- evaluated per combination. Off with o.separable = false, or whenever the set has U (the spread is not additive).
 	self.separable = o.separable ~= false
+	-- CENTRED FLAGS (Bingo's row): a choice's one-hot flags sum to the bias on every row, so P is singular in
+	-- one direction a choice and only the ridge holds it; reading each flag as (picked - 1/options) removes that
+	-- direction while treating every option alike. A reparametrisation: reach is unchanged, the prior is not.
+	self.centred = o.centredFlags == true
 	self.gamma = o.gamma or 0.7 -- how much the projected next step counts
 	self.surprise = o.surprise or 5 -- a row this far from its prediction is a surprise
 	self.memory = if self.has.M then (o.memory or 200) else 0
@@ -623,10 +627,20 @@ function Mind:phiO(X: { number }, picks: { number }, out: { number }?): { number
 		end
 	end
 	local k = self.nXO + 1
-	for ci, c in ipairs(self.choices) do
-		for oo = 1, #c.options do
-			k += 1
-			phi[k] = if picks[ci] == oo then 1 else 0
+	if self.centred then
+		for ci, c in ipairs(self.choices) do
+			local off = 1 / #c.options
+			for oo = 1, #c.options do
+				k += 1
+				phi[k] = (if picks[ci] == oo then 1 else 0) - off
+			end
+		end
+	else
+		for ci, c in ipairs(self.choices) do
+			for oo = 1, #c.options do
+				k += 1
+				phi[k] = if picks[ci] == oo then 1 else 0
+			end
 		end
 	end
 	if self.pooledValue then
@@ -1124,7 +1138,9 @@ local function sepEntry(self, ctx, idx: number, p: { number }): number
 		return ctx.phiB[idx]
 	elseif idx <= 1 + nXO + nOpt then
 		local g = idx - 1 - nXO
-		return if p[self.optChoice[g]] == self.optLocal[g] then 1 else 0
+		local ci = self.optChoice[g]
+		local v = if p[ci] == self.optLocal[g] then 1 else 0
+		return if self.centred then v - 1 / #self.choices[ci].options else v
 	elseif idx <= 1 + nXO + nOpt + self.nPool then
 		local size = self.poolSize
 		local r = idx - (1 + nXO + nOpt) - self.poolKinds * #self.poolCopies * size
@@ -1259,6 +1275,14 @@ function Mind:scoreCombos(Xs: { { number } }, feasible, scored)
 		local delta = {}
 		for ci, c in ipairs(choices) do
 			local dc = {}
+			if self.centred then
+				-- every flag of the choice reads -1/options whatever is picked: that part goes to the base
+				local sum = 0
+				for oo = 1, #c.options do
+					sum += u[1 + nXO + self.optIndex[ci][oo]]
+				end
+				b -= sum / #c.options
+			end
 			for oo = 1, #c.options do
 				local g = self.optIndex[ci][oo]
 				local v = u[1 + nXO + g]

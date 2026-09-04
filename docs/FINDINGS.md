@@ -5381,3 +5381,19 @@ Fewer seeds reach the threshold at either scale on three worlds of four (world 2
 bonuses and the dither could not. With Kestrel's noise floor in mind this is "no sign of a gain", not a proof of
 harm, but it is the seventh exploration idea to read below the newborn, and the line stays closed. RLSVI stays in
 the prototype.
+
+## 87. Centred one-hot flags (Bingo): a reparametrisation, measured paired in the package harness
+
+Each flag read as (picked - 1/options) removes the direction in which a choice's flags are collinear with the
+bias. Package option `centredFlags = true`, separable scoring adjusted (exact, 1.8e-14). Paired on eight seeds
+with the row calibration on in both arms (reached, median episode, score when learned):
+
+| | world 2 | world 24 |
+|---|---|---|
+| dense, calibrated | 7/8, 14, 222 | 8/8, 11, 683 |
+| dense, calibrated, centred | 8/8, 13, 221 | 7/8, 11, 658 |
+| code 16, calibrated | 7/8, 12, 224 | 8/8, 11, 648 |
+| code 16, calibrated, centred | 6/8, 12, 229 | 6/8, 11.5, 675 |
+
+Inside the noise for the dense mind, two seeds worse on each world for the code. The prior it changes is not
+the one that limits the newborn. Kept as an option, off.
