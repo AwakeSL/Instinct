@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.7
+
+- Three exact shortcuts in `RLS.update` (Bingo's rows in the ledger): zero inputs are skipped in the matvec
+  when a fair share of the inputs are zero, the covariance downdate is done once per entry pair and mirrored,
+  and a row counted several times (`reps`) is one closed-form update. Against the textbook update: max weight
+  difference 7e-16, covariance 3e-16 (`scripts/check_rls.luau`). Settle in Lune: 37 senses 1,016 -> 754 us;
+  149 senses 14,587 -> 8,273 us; 317 senses 73,449 -> 34,267 us dense, 5,435 -> 3,953 us flat
+  (`scripts/bench_settle.luau`).
+
 ## 0.5.6
 
 - Separable pick search (on by default, `separable = false` to disable): the first pass scores every

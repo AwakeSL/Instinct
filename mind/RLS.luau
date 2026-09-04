@@ -178,7 +178,9 @@ local function updateSparse(m: Model, phi: { number }, y: { number }, absent: { 
 end
 
 -- One row: inputs phi, outputs y. Every output shares the gain, so the covariance is updated once.
-function RLS.update(m: Model, phi: { number }, y: { number })
+-- One row of evidence. `reps` counts the row that many times, in closed form (k identical updates are one
+-- update with denominator 1 + k phi'P phi and gain k P phi / that: the same weights and covariance).
+function RLS.update(m: Model, phi: { number }, y: { number }, reps: number?)
 	if m.blocks then
 		updateBlocks(m, phi, y)
 		return
@@ -188,17 +190,41 @@ function RLS.update(m: Model, phi: { number }, y: { number })
 		return
 	end
 	local F, P = m.F, m.P
+	local k = reps or 1
 	local Pphi = table.create(F, 0)
-	local denom = 1
+	-- the inputs that are not zero: absent slots and unpicked options read zero, and a zero term is skipped
+	-- exactly (the index list pays only when a fair share of the inputs are zero)
+	local nz, nnz = nil, 0
+	for j = 1, F do
+		if phi[j] ~= 0 then
+			nnz += 1
+		end
+	end
+	if nnz * 4 < F * 3 then
+		nz = table.create(nnz)
+		for j = 1, F do
+			if phi[j] ~= 0 then
+				table.insert(nz, j)
+			end
+		end
+	end
+	local quad = 0
 	for i = 1, F do
 		local s = 0
 		local Pi = P[i]
-		for j = 1, F do
-			s += Pi[j] * phi[j]
+		if nz then
+			for _, j in nz do
+				s += Pi[j] * phi[j]
+			end
+		else
+			for j = 1, F do
+				s += Pi[j] * phi[j]
+			end
 		end
 		Pphi[i] = s
-		denom += phi[i] * s
+		quad += phi[i] * s
 	end
+	local denom = 1 + k * quad
 	if not (denom > 1e-9) then
 		return -- a covariance gone bad: skip the row rather than poison the weights
 	end
@@ -209,25 +235,37 @@ function RLS.update(m: Model, phi: { number }, y: { number })
 			continue -- a NaN can never be washed out by later evidence
 		end
 		local e = target
-		for i = 1, F do
-			e -= w[i] * phi[i]
+		if nz then
+			for _, i in nz do
+				e -= w[i] * phi[i]
+			end
+		else
+			for i = 1, F do
+				e -= w[i] * phi[i]
+			end
 		end
-		m.mean[r] = 0.99 * m.mean[r] + 0.01 * target
-		m.err[r] = 0.99 * m.err[r] + 0.01 * e * e
-		m.var[r] = 0.99 * m.var[r] + 0.01 * (target - m.mean[r]) ^ 2
-		local g = e / denom
+		for _ = 1, k do
+			m.mean[r] = 0.99 * m.mean[r] + 0.01 * target
+			m.err[r] = 0.99 * m.err[r] + 0.01 * e * e
+			m.var[r] = 0.99 * m.var[r] + 0.01 * (target - m.mean[r]) ^ 2
+		end
+		local g = k * e / denom
 		for i = 1, F do
 			w[i] += Pphi[i] * g
 		end
 	end
+	-- the covariance is symmetric, so the downdate is done once an entry pair and mirrored
 	for i = 1, F do
 		local Pi = P[i]
-		local ki = Pphi[i] / denom
-		for j = 1, F do
-			Pi[j] -= ki * Pphi[j]
+		local ki = k * Pphi[i] / denom
+		Pi[i] -= ki * Pphi[i]
+		for j = i + 1, F do
+			local v = Pi[j] - ki * Pphi[j]
+			Pi[j] = v
+			P[j][i] = v
 		end
 	end
-	m.n += 1
+	m.n += k
 end
 
 function RLS.predict(m: Model, r: number, phi: { number }): number

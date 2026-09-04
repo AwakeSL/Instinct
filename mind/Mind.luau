@@ -1627,9 +1627,7 @@ function Mind:settle(totals: { number }, xNow: { number }, tick: number, over: b
 			if self.sparse then
 				self:markAbsent(self.O, r.x, self:senseCopies())
 			end
-			for _ = 1, reps do
-				RLS.update(self.O, r.phi, y)
-			end
+			RLS.update(self.O, r.phi, y, reps)
 			if self.descr and self.descrLearn > 0 then
 				self:descrStep(r, y)
 			end
