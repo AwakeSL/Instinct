@@ -108,10 +108,13 @@ function Mind.new(nIn: number, choices: { any }, o: any)
 	self.reps = o.reps or 3 -- extra updates for a surprising good row
 	-- ROW WEIGHTS (Bingo's rows in the ledger): consecutive outcome rows share H-1 of their H ticks and effects
 	-- rows STEP-1 of STEP, so each carries about 1/H (1/STEP) of an independent row's evidence; weighting them
-	-- so keeps the covariance honest and the creature plastic. o.calibrated = true weights both; o.rowWeight and
-	-- o.effectsRowWeight set either directly.
-	self.rowWeight = o.rowWeight or (if o.calibrated then 1 / self.H else nil)
-	self.effectsRowWeight = o.effectsRowWeight or (if o.calibrated then 1 / self.STEP else nil)
+	-- so keeps the covariance honest and the creature plastic. On by default (o.calibrated = false turns it off;
+	-- o.rowWeight and o.effectsRowWeight set either directly): in the package's own harness, eight seeds paired,
+	-- it took world 24 from 5 of 8 learning to 8 of 8 for the dense mind and 7 to 8 for the code, at the same
+	-- score, and world 2's median from episode 16 to 14 (FINDINGS 85).
+	local calibrated = o.calibrated ~= false
+	self.rowWeight = o.rowWeight or (if calibrated then 1 / self.H else nil)
+	self.effectsRowWeight = o.effectsRowWeight or (if calibrated then 1 / self.STEP else nil)
 	self.eps = 0 -- chance of a random feasible combination instead of the best (the coach sets it)
 	self.sticky = o.sticky or 0.9 -- while exploring, the chance of holding the last random combination another tick
 	self.nudgeAfter = o.nudgeAfter or 10 -- decisions with unchanged senses before the creature tries something else
@@ -1071,6 +1074,21 @@ end
 -- Which choice an outcome input depends on: nil for none, a choice index for one, false for several (the
 -- descriptors sum over every choice).
 function Mind:pickDep(idx: number): any
+	local cache = self.depCache
+	if not cache then
+		cache = {}
+		self.depCache = cache
+	end
+	local hit = cache[idx]
+	if hit ~= nil then
+		return if hit == 0 then nil else hit
+	end
+	local dep = self:pickDepOf(idx)
+	cache[idx] = if dep == nil then 0 else dep
+	return dep
+end
+
+function Mind:pickDepOf(idx: number): any
 	local nXO, nOpt = self.nXO, self.nOpt
 	if idx <= 1 + nXO then
 		return nil
@@ -1086,6 +1104,9 @@ function Mind:pickDep(idx: number): any
 		return false
 	end
 	local a = self.acquired[idx - self.FO]
+	if not a then
+		return false
+	end
 	local di, dj = self:pickDep(a.i + 1), self:pickDep(a.j + 1)
 	if di == nil then
 		return dj
@@ -2001,6 +2022,7 @@ function Mind:acquire()
 			b.forReading = b.forReading or "value"
 			table.insert(self.acquired, b)
 			RLS.grow(self.O, self.extraRidge)
+			self.depCache = nil
 			self.opPrior[b.op] += b.c
 			self.sensePrior[b.i] = (self.sensePrior[b.i] or 1) + b.c
 			self.sensePrior[b.j] = (self.sensePrior[b.j] or 1) + b.c
@@ -2208,7 +2230,8 @@ function Mind:teach(k, names: { string })
 					end
 					if not dup then
 						table.insert(self.acquired, { op = "mul", i = fi - 1, j = b, c = 0, forReading = "declared" })
-						RLS.grow(O, self.ridge) -- at the plain ridge: the rows below are what set them
+						RLS.grow(O, self.ridge)
+						self.depCache = nil -- at the plain ridge: the rows below are what set them
 					end
 				end
 			end
@@ -2307,6 +2330,7 @@ function Mind:learnFrom(k, names: { string })
 		if i and j and OPS[pf.op] then
 			table.insert(self.acquired, { op = pf.op, i = i - 1, j = j - 1, c = 0, forReading = "declared" })
 			RLS.grow(O, self.extraRidge)
+			self.depCache = nil
 		end
 	end
 	for _, pr in ipairs(k.priors or {}) do
@@ -2464,6 +2488,7 @@ function Mind:load(saved)
 	if saved.nIn ~= self.nIn or (saved.nRaw or self.nRaw) ~= self.nRaw or (saved.codeSeed or self.codeSeed) ~= self.codeSeed then
 		error("[instinct] a saved mind with a different number of senses (or another code)", 0)
 	end
+	self.depCache = nil
 	self.acquired = {}
 	for _, a in ipairs(saved.acquired or {}) do
 		table.insert(self.acquired, { op = a.op, i = a.i, j = a.j, c = a.c, forReading = a.forReading })

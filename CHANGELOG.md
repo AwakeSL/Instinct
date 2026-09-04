@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.2
+
+- Row calibration on by default (`calibrated = false` to turn it off): outcome rows weighted 1/H and effects rows
+  1/STEP. Paired on eight seeds in the package harness: world 24 learned on 8 of 8 seeds against 5 of 8 for the
+  dense mind and 8 against 7 for the code, at the same score when learned; world 2's median threshold moved from
+  episode 16 to 14 (FINDINGS 85).
+- The pick-dependence of acquired features is memoized (taught pairs made a think dearer than the plain pass).
+
 ## 0.6.1
 
 - Teaching instincts to a code: fitted on a scratch model and only the weights taken (teaching into the

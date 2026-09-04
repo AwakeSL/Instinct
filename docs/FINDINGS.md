@@ -5345,3 +5345,22 @@ world 2 in 20 episodes). But the code must be *all* there is: appending raw sens
 five item and host slot senses; or a slots-only projection with the ten self readings raw, at 12, 16 or 20)
 collapses or is fragile on world 2 (0, 4 / 216, 6-86). Whatever raw senses do to the newborn, the code escapes
 it by not having any.
+
+## 85. The row calibration, measured where it ships (Bingo's row weights, 1/H and 1/STEP)
+
+Section 83 called the calibration a loss on three seeds of the held-out battery; Kestrel then showed those
+differences sit inside the battery's noise floor (world 24's finals are bimodal: sd 264 over nine seeds, so three
+seeds cannot separate anything under about 600), and Bingo measured the same weighting on the package's own
+harness at six seeds with a halving of rows to threshold. Paired on eight seeds in the package harness
+(`scripts/mind`, worlds 2 and 24), reporting what Kestrel asked for, reached and the score when reached:
+
+| | world 2 reached | median episode | world 24 reached | median episode | score when learned |
+|---|---|---|---|---|---|
+| dense | 7/8 | 16 | 5/8 | 11 | 224 / 672 |
+| dense, calibrated | 7/8 | 14 | **8/8** | 11 | 222 / 683 |
+| code 16 | 8/8 | 12.5 | 7/8 | 11 | 217 / 658 |
+| code 16, calibrated | 7/8 | 12 | **8/8** | 11 | 224 / 648 |
+
+Same score when it learns, and the seeds that used to fail world 24 now learn it. One scalar on two models, so
+it is the default from 0.6.2 (`calibrated = false` turns it off). The held-out three-seed verdict in 83 stands
+corrected as unresolved, not negative.
