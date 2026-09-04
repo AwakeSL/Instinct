@@ -5566,3 +5566,41 @@ The effects' copies and the pool's copies buy nothing: seed for seed the same. T
 lose a seed on each world. Defaults from 0.6.6: effects read the senses and their trend, the pool reads the
 senses alone; the beam stays. Settle in Lune at 30 senses: code 206 -> 143 us, dense 422 -> 292, flat 425 ->
 352. The other free cut is still the decision rate (79): every 0.3 s instead of 0.1 s is a third of the compute.
+
+## 91. Combining the two learners: three ways, measured
+
+Kestrel's learner (88) costs a tenth of ours because it has no covariance and no effects tier. Three ways to
+combine them, paired on eight seeds in the package harness (reached, median episode, score when learned):
+
+**1. Our mind with Kestrel's learner: normalised LMS in place of RLS, every model** (`lms = mu`).
+
+| | world 2 | world 24 |
+|---|---|---|
+| code, RLS (ref) | 7/8, 12, 224 | 8/8, 11, 673 |
+| code, LMS 0.2 | 8/8, 24, 186 | 2/8, 23, 658 |
+| code, LMS 0.5 | 5/8, 24, 200 | 3/8, 22, 626 |
+| code, LMS 1.0 | 2/8, 22, 187 | 0/8 |
+| dense, RLS (ref) | 7/8, 14, 224 | 8/8, 11, 672 |
+| dense, LMS 0.5 | 4/8, 22.5, 215 | 3/8, 21, 654 |
+
+Twice the rows to the threshold and most of world 24 lost, at every step size, for either mind. So the
+covariance is what buys the learning speed and the reliability with our tiers attached; it is not dead weight.
+Kestrel's learner reaches its threshold in fewer rows than ours on his harness because it is a different learner
+throughout (whitened senses, the option read on the senses, a bootstrap), not because LMS is a free swap.
+
+**3. Two rates in one creature** (`think(..., reflex = true)` skips the look-ahead; `HOLD` holds the picks).
+
+| | world 2 | world 24 |
+|---|---|---|
+| code, every decision full (ref) | 7/8, 12, 224 | 8/8, 11, 673 |
+| code, reflex on two decisions of three | 8/8, 14.5, 220 | 6/8, 11, 669 |
+| code, reflex on one of two | 7/8, 13, 226 | 7/8, 13, 676 |
+| code, full every third tick, picks held | 8/8, 12, 202 | 7/8, 11, 678 |
+
+Holding the picks between full decisions (79's decision rate) stays the better cut: a third of the thinks, a
+third of the rows and the same learning. A reflex decision between full ones saves less than it looks, because
+the look-ahead is only a third of a think: 171 -> 131 us on average for two reflexes in three, and a seed or
+two of world 24 with it. Not adopted; `reflex` remains for a creature that must react every tick.
+
+**2. Kestrel's learner with our foresight** (an effects law per group option on the whitened senses, the best
+nine combinations projected one step): kesmind_f.lua, running on the held-out worlds at 150 episodes; see below.

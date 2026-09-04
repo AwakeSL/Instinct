@@ -98,6 +98,9 @@ function Mind.new(nIn: number, choices: { any }, o: any)
 	-- combinations come back (to rounding). Acquired features pairing two choices are the one exception and are
 	-- evaluated per combination. Off with o.separable = false, or whenever the set has U (the spread is not additive).
 	self.separable = o.separable ~= false
+	-- LEARNER (o.lms = mu): every model fits by normalised LMS at that step instead of RLS. No covariance, so
+	-- every settle is linear in the inputs; Kestrel's learner fits that way. Set after the models are built.
+	self.lms = o.lms
 	-- CENTRED FLAGS (Bingo's row): a choice's one-hot flags sum to the bias on every row, so P is singular in
 	-- one direction a choice and only the ridge holds it; reading each flag as (picked - 1/options) removes that
 	-- direction while treating every option alike. A reparametrisation: reach is unchanged, the prior is not.
@@ -417,6 +420,11 @@ function Mind.new(nIn: number, choices: { any }, o: any)
 	self.tickTotals = {}
 	self.thinkTime, self.train = 0, 0
 	self.stats = { stored = 0, retests = 0, confirmed = 0, forgotten = 0, kept = 0, seen = 0, thinks = 0, updates = 0, rebirths = 0 }
+	if self.lms then
+		for _, m in ipairs(self:models()) do
+			m.lms = self.lms
+		end
+	end
 	return self
 end
 
@@ -1128,6 +1136,24 @@ function Mind:worth(X: { number }, picks: { number }, phi: { number }, plain: bo
 	return v
 end
 
+-- Every RLS model the mind holds.
+function Mind:models(): { any }
+	local out = { self.O }
+	for _, key in { "Cm", "CG", "CS", "Hm" } do
+		if self[key] then
+			table.insert(out, self[key])
+		end
+	end
+	for _, key in { "E", "EG", "ES" } do
+		if self[key] then
+			for _, m in pairs(self[key]) do
+				table.insert(out, m)
+			end
+		end
+	end
+	return out
+end
+
 -- ------------------------------------------------------------------ separable pick search
 
 -- Which choice an outcome input depends on: nil for none, a choice index for one, false for several (the
@@ -1421,7 +1447,8 @@ end
 -- sensesOf(target) returns the raw senses as if that target option were taken (the first choice is
 -- the target, and choosing one changes what the slots hold). feasible(picks) says whether the
 -- world would accept a combination.
-function Mind:think(sensesOf, feasible)
+-- reflex = true skips the look-ahead: the first pass decides (a cheap decision between full ones)
+function Mind:think(sensesOf, feasible, reflex: boolean?)
 	local t0 = clock()
 	local xs, Xs = {}, {}
 	for a = 1, #self.choices[1].options do
@@ -1466,7 +1493,7 @@ function Mind:think(sensesOf, feasible)
 		return finish(table.clone(self.combos[1]), nil)
 	end
 	-- second step: the best BEAM extended by their projected next senses, held
-	if self.has.E then
+	if self.has.E and not reflex then
 		-- the best BEAM to the front, in order (a selection, not a sort: the rest need no order)
 		-- the best BEAM to the front, in order (a selection, not a sort: the rest need no order); ties drawn
 		-- at random so the same combinations are not always the ones looked ahead on

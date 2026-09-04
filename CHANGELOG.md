@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.7
+
+- `lms = mu`: every model fits by normalised LMS instead of RLS (no covariance). Measured paired on eight
+  seeds: twice the rows to the threshold and most of world 24 lost at every step, for the code and the dense
+  mind, so the covariance stays (FINDINGS 91). Kept as an option for a creature that must be linear in the inputs.
+- `mind:think(sensesOf, feasible, reflex)`: `reflex = true` skips the look-ahead. Two reflexes in three saved a
+  quarter of the think and cost a seed or two; holding the picks between full decisions remains the better cut.
+- `Mind:models()` lists every model the mind holds.
+
 ## 0.6.6
 
 - Cheaper by default, measured equal on eight seeds paired (FINDINGS 90): effects models read the senses and

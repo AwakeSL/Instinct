@@ -182,7 +182,43 @@ end
 -- update with denominator 1 + k phi'P phi and gain k P phi / that: the same weights and covariance).
 -- `weight` scales the row's evidence without changing its count: 1/H for a row whose target overlaps the next
 -- row's over H ticks (overlapping returns), so the covariance stays honest about what it has seen.
+-- Normalised LMS: the same row, without a covariance. w += mu * e * phi / (1 + |phi|^2), the confidence
+-- bookkeeping as for RLS. Linear in the inputs; what the covariance buys is measured against it (FINDINGS 91).
+local function updateLMS(m: Model, phi: { number }, y: { number }, mu: number, reps: number)
+	local F = m.F
+	local norm = 1
+	for i = 1, F do
+		norm += phi[i] * phi[i]
+	end
+	local step = mu * reps / norm
+	for r = 1, m.NR do
+		local w = m.W[r]
+		local target = y[r]
+		if target ~= target then
+			continue
+		end
+		local e = target
+		for i = 1, F do
+			e -= w[i] * phi[i]
+		end
+		for _ = 1, reps do
+			m.mean[r] = 0.99 * m.mean[r] + 0.01 * target
+			m.err[r] = 0.99 * m.err[r] + 0.01 * e * e
+			m.var[r] = 0.99 * m.var[r] + 0.01 * (target - m.mean[r]) ^ 2
+		end
+		local g = e * step
+		for i = 1, F do
+			w[i] += phi[i] * g
+		end
+	end
+	m.n += reps
+end
+
 function RLS.update(m: Model, phi: { number }, y: { number }, reps: number?, weight: number?)
+	if m.lms then
+		updateLMS(m, phi, y, m.lms, reps or 1)
+		return
+	end
 	if m.blocks then
 		updateBlocks(m, phi, y)
 		return

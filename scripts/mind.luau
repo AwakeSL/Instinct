@@ -167,7 +167,7 @@ end
 -- ------------------------------------------------------------------ the creature
 local GROUPS = Senses.groups(SLOTS, { "timeLeft", "armed" })
 local BLOCKS = if process.env.BLOCKS == "1" then GROUPS else nil
-local OPTS = { set = "OMECA", code = tonumber(process.env.CODE), calibrated = process.env.CALIB ~= "0", separable = process.env.SEP ~= "0", centredFlags = process.env.CENTRED == "1", optionBlock = process.env.OPTBLOCK == "1", effectsInputs = process.env.EFFIN, poolRaw = process.env.POOLRAW ~= "0", readings = READINGS, pref = PREF, horizon = 24, step = 12, beam = tonumber(process.env.BEAM) or 10, blocks = BLOCKS, groups = GROUPS, sparse = process.env.SPARSE == "1", equivariant = process.env.EQUIV == "1", pooledValue = process.env.POOL == "1" }
+local OPTS = { set = "OMECA", code = tonumber(process.env.CODE), calibrated = process.env.CALIB ~= "0", separable = process.env.SEP ~= "0", centredFlags = process.env.CENTRED == "1", optionBlock = process.env.OPTBLOCK == "1", effectsInputs = process.env.EFFIN, lms = tonumber(process.env.LMS), poolRaw = process.env.POOLRAW ~= "0", readings = READINGS, pref = PREF, horizon = 24, step = 12, beam = tonumber(process.env.BEAM) or 10, blocks = BLOCKS, groups = GROUPS, sparse = process.env.SPARSE == "1", equivariant = process.env.EQUIV == "1", pooledValue = process.env.POOL == "1" }
 local mind = Mind.new(#NAMES, CHOICES, OPTS)
 -- COACH=floor: rebirth below the random floor; COACH=stall: and when stalled within half the way to greedy
 local coach = Coach.new(mind, {
@@ -196,12 +196,22 @@ end
 local function episode(learn)
 	local w = newWorld()
 	local tick = 0
+	local heldPicks = nil
 	while w.t < R.length do
-		local picks, x, phi, event = mind:think(function()
-			return senses(w)
-		end, feasible)
-		if learn then
-			mind:note(x, phi, picks, event, totalsOf(w), tick)
+		local reflexEvery = tonumber(process.env.REFLEX)
+		local holdEvery = tonumber(process.env.HOLD)
+		local picks, x, phi, event
+		if holdEvery and tick % holdEvery ~= 0 and heldPicks then
+			-- HOLD=k: a full decision every k-th tick, the picks held between (no think, no row)
+			picks = heldPicks
+		else
+			picks, x, phi, event = mind:think(function()
+				return senses(w)
+			end, feasible, reflexEvery ~= nil and tick % reflexEvery ~= 0)
+			heldPicks = picks
+			if learn then
+				mind:note(x, phi, picks, event, totalsOf(w), tick)
+			end
 		end
 		step(w, picks)
 		tick += 1
