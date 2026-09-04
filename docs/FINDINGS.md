@@ -5604,3 +5604,21 @@ two of world 24 with it. Not adopted; `reflex` remains for a creature that must 
 
 **2. Kestrel's learner with our foresight** (an effects law per group option on the whitened senses, the best
 nine combinations projected one step): kesmind_f.lua, running on the held-out worlds at 150 episodes; see below.
+
+**2, measured, with a caveat that voids it.** kesmind_f.lua adds to Kestrel's learner an effects law per group
+option on the whitened senses (NLMS, rows 12 ticks apart) and a one-step projection of the best nine
+combinations, credited KG2 = 0.5 times a confidence gate. Held-out worlds, six seeds, 150 episodes, KLOCAL=0
+(reached / seeds; mean of the finals):
+
+| | 18 | 20 | 24 | 28 |
+|---|---|---|---|---|
+| kesmind, as on disk | 0/6 (31) | 3/6 (129) | 2/6 (28) | 1/6 (78) |
+| + foresight | 0/6 (51) | 1/6 (104) | 0/6 (90) | 0/6 (89) |
+| + foresight, no bootstrap | 0/6 (31) | 0/6 (132) | 0/6 (30) | 0/6 (110) |
+
+The caveat: the kesmind on disk does not reproduce section 88. World 18 seed 1 reads 24 (kesmind.lua), 9 and 5
+(the two .bak versions), 27 with the coach, against 88's 186 to 220; tabmind3 under the same tabgen_k reads 234,
+so the harness is fine. kesmind.lua and tabgen_k.lua were both edited after 88 was written (00:10 and 00:22),
+so the file is probably mid-change. Until the version that produced 88 is restored, the foresight tier has
+been measured on a learner that is not the one in the table, and the comparison says nothing about way 2. The
+patch (`patch_kforesee.py` in the scratchpad, kesmind_f.lua) is ready to re-run in a minute once it is.
