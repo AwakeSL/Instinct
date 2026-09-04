@@ -48,7 +48,8 @@ it scored: `coach:beginEpisode()` and `coach:endEpisode(score)`.
 
 Everything here was measured against alternatives in an offline prototype, on an arena of scripted
 fighters, a foraging puzzle, a sheep-and-wolves world, and a generator of random worlds with four held
-out that were never tuned on. The running log is `C:\lua code\FINDINGS.md`; the short version:
+out that were never tuned on. `docs/IDEAS.md` is the ledger: every idea tried, its number, and its verdict;
+`docs/FINDINGS.md` is the full running log behind it. The short version:
 
 - **One linear outcome model with a flag per option** carries the policy. Every attempt to judge an
   option by its consequences alone made the creature uniformly worse.
