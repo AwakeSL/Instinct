@@ -8,7 +8,7 @@
   over `stall` checks is reborn. With the row calibration on, the harness's remaining failures sit near the
   threshold and the rule did not fire, so no gain is claimed yet.
 - `optionBlock = true` (off by default): every option read on the self readings, one weight vector an option,
-  exact under the separable pass (Kestrel's suggestion from a second learner); paired test pending.
+  exact under the separable pass (Kestrel's suggestion from a second learner). Measured paired: slower and worse on both worlds (FINDINGS 89); off.
 - Harness: `COACH=floor|stall`, `OPTBLOCK=1`; the result line reports rebirths.
 
 ## 0.6.4

@@ -5420,3 +5420,7 @@ learned), against the calibrated arms' eight seeds:
 Slower to the threshold and worse when there, and the code loses world 24 outright. Kestrel's learner reads the
 block on whitened senses by normalised LMS; here it is hundreds more ridge-regularised inputs for the same rows,
 and the acquisition already finds the option-sense pairs that matter. Kept as an option, off.
+
+At 150 episodes, two seeds: code seed 1 never reaches (−117), code seed 2 reaches at episode 10 and ends at
+**460** against a greedy hand policy's 136 and the dense mind's 133 / 196 (episodes 13 and 15). Split: a code
+with a tag vocabulary either fails or beats the dense mind by more than double. More seeds are running.
