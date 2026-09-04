@@ -86,34 +86,47 @@ return {
 
 A prior sets a weight and how sure the creature starts; a feature declares a pair worth making; an
 effect says what an option does to a sense; a curious pair is searched first; a memory matches only on
-the senses it names. `mind:distill(NAMES)` produces one of these from a creature that has lived, for a
+the senses it names. Under a code (`code = 16`) the priors and pair features are *taught*: fitted as rows over
+the named senses' directions and the named options, counted `conf` times, so the creature is born believing
+the same things without an input to pin them to. `mind:distill(NAMES)` produces one of these from a creature that has lived, for a
 spawn of the same kind; `mind:save()` and `mind:load()` are the whole creature as plain data.
 
 ## Cost, and how it scales
 
-A think is cheap and grows linearly with the senses and the options (the effects are cached per think). A settle
-(learning) is the cost, and with the full update it grows with the square of the sense count: in the prototype
-about 0.25 ms a decision at 38 senses, 2.3 ms at 150, 8.5 ms at 318 (Studio with `--!native` is about three
-times slower than LuaJIT). Three linear-cost variants exist, and every one was measured to cost about a quarter
-of the learning on held-out worlds (FINDINGS 76-77):
+A settle (learning) is the cost: with the full update it grows with the square of the sense count (prototype:
+0.25 ms a decision at 38 senses, 2.3 ms at 150, 8.9 ms at 318; Studio with `--!native` is about three times
+slower than LuaJIT). Every cut that drops cross-terms or rows lost about a quarter of the learning on held-out
+worlds (FINDINGS 76-78). Two configurations hold their learning and are flat in the senses:
 
-- `blocks = Senses.groups(...)` -- effects and couplings are learned within a slot's own group and the self;
-  `localOutcome = true` makes the outcome model block-local too (dearer in learning).
-- `sparse = true` with `groups = Senses.groups(...)` -- an absent slot is skipped in every update. Sound only for
-  slots that never return; a slot that comes and goes needs the reset (`sparseReset = true`, which zeroes a
-  returning slot's cross-covariance).
+- **The flat mind**: `equivariant = true, pooledValue = true` with `groups = Senses.groups(SLOTS, WORLD)`. One
+  effects law per option shared across the slots and one drift law per slot kind, both reading a pooled summary
+  of the present slots by kind; the value reads the self readings plus the present slots pooled by kind and by
+  chosen option. Settle 287 / 320 / 350 us at 150 / 318 / 738 senses in LuaJIT; held-out rows to threshold
+  94 / 842 / 388 / 213 against the full model's 187 / 704 / 314 / 207 (FINDINGS 80-82). Instincts named on slot
+  senses land on the pooled field of the slot's kind. Keep `ridge` at 1; `valueRidge` defaults to 30 under it.
+- **The code**: `code = 16` (with `codeSeed`). The senses are read through a fixed random mix of sixteen numbers
+  and every tier works on the code, so cost is sixteen squared whatever the game offers. Measured on the
+  held-out worlds, six seeds: 140 / 808 / 544 / 305 against the same set's dense 145 / 385 / 228 / 134, and one
+  world the dense mind reached on two seeds in six the code reached on all six (FINDINGS 84). Twenty-four is
+  worse and twelve loses a world; keep nothing raw beside the code, it breaks. The slot machinery is off under a
+  code; instincts named on senses are taught to it as rows (below). Memories and curious pairs named on senses
+  are skipped.
 
-The guidance that follows from the measurements: keep the full update below about sixty senses a creature, and
-give a slot to what a creature needs to react to rather than to everything it could sense. The one cut that does
-not touch the models is the decision rate: deciding every 0.3 s instead of every 0.1 s costs a third of the compute
-and stayed within seed noise on three held-out worlds of four (FINDINGS 79), so decide ten times a second only for
-creatures that are fighting. Above sixty senses, pick which quarter to give up.
+Both are cheap enough that the cost that remains is the act count: the first pass of a think is separable
+(a base plus one number a chosen option, exact), so 700 acts by 20 moves cost 3.7 ms a think in Lune rather
+than 274 (`separable = false` restores the plain pass). The decision rate is the other free cut: deciding every
+0.3 s instead of every 0.1 s costs a third and stayed within seed noise on three held-out worlds of four
+(FINDINGS 79). The older linear-cost variants (`blocks`, `sparse`) remain but lose learning.
 
 ## Checking it
 
 ```
-lune run scripts/mind [episodes]     # env WORLD=2|24, SEED
+lune run scripts/mind [episodes]         # env WORLD=2|24, SEED, EQUIV=1 POOL=1 (flat), CODE=16 (code), CHECKSEP=1
+lune run scripts/bench_think [acts]      # think cost against the act count, full and separable
+lune run scripts/bench_settle [slots]    # settle cost against the sense count (EQUIV=1 POOL=1 for the flat mind)
+lune run scripts/check_rls               # RLS.update against the textbook update
+lune run scripts/check_instincts         # instincts land under the dense, pooled and code layouts
 ```
 
-runs a creature in the prototype's worlds without Roblox and reports rows to threshold, the final
+The first runs a creature in the prototype's worlds without Roblox and reports rows to threshold, the final
 score against a greedy hand policy, microseconds a think, and a save-and-reload check.

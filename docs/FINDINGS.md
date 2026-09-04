@@ -5336,3 +5336,12 @@ collapses. Cost is B squared and fixed whatever the game offers. What it cannot 
 declared on senses have no place to land, and the slot machinery (equivariant, pooled, groups) is off. Next: is it
 the compression (B < n) or the mixing (every input always live)? A square random rotation (PROJ=37) and PROJ=12
 are running.
+
+**Compression or mixing?** Six seeds, OMECA: a square random rotation (PROJ=37) reads 116 / 720 / 223 / 188 (mean
+312) and a code of 12 reads 138 / 693 / 550 / 127 (377), against 16's 449 and dense's 223. Mixing alone gets
+world 20; compression gets world 24 (12 and 16 both reach it on every seed, 37 does not). Sixteen is the sweet
+spot of the three; 12 loses world 28. The projection is robust to the matrix drawn (three more seeds all reach
+world 2 in 20 episodes). But the code must be *all* there is: appending raw senses beside it (six self readings;
+five item and host slot senses; or a slots-only projection with the ten self readings raw, at 12, 16 or 20)
+collapses or is fragile on world 2 (0, 4 / 216, 6-86). Whatever raw senses do to the newborn, the code escapes
+it by not having any.

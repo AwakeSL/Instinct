@@ -32,3 +32,25 @@ for _, pooled in { false, true } do
 	end
 	print(("pooled=%s: priors placed %d of 3, features %s; itemdist -> input %s"):format(tostring(pooled), m.stats.priors or 0, table.concat(named, " "), m:inputName(m:featureIndex("itemdist", NAMES) - 1, NAMES)))
 end
+
+-- under a code the instincts are taught as rows: does the taught value point the same way?
+do
+	local m = Mind.new(#NAMES, CHOICES, {
+		set = "OMECA", code = 16, readings = { "eaten" }, pref = { eaten = 1 },
+	})
+	m:learnFrom(K, NAMES)
+	local function worthOf(x, picks)
+		local X = m:extend(m:encode(x))
+		return m:worth(X, picks, {}, true)
+	end
+	local none = table.create(#NAMES, 0)
+	local near = table.create(#NAMES, 0)
+	near[table.find(NAMES, "itemthere")] = 1
+	near[table.find(NAMES, "itemdist")] = 0.2
+	near[table.find(NAMES, "itembearing")] = 0.5
+	local far = table.clone(near)
+	far[table.find(NAMES, "itemdist")] = 1
+	local hold, forward, left, right = { 1, 1, 1 }, { 1, 2, 1 }, { 1, 1, 2 }, { 1, 1, 3 }
+	print(("code: priors taught %d rows, acquired %d; worth nothing/hold %.2f, near/hold %.2f, near/forward %.2f, far/forward %.2f, near/left %.2f, near/right %.2f"):format(
+		m.stats.priors or 0, #m.acquired, worthOf(none, hold), worthOf(near, hold), worthOf(near, forward), worthOf(far, forward), worthOf(near, left), worthOf(near, right)))
+end

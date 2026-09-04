@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.0
+
+- `code = B` (with `codeSeed`): the senses are read through a fixed random code of B numbers and every tier
+  works on the code. Held-out, six seeds, B = 16: 140 / 808 / 544 / 305 rows to threshold against the same
+  set's dense 145 / 385 / 228 / 134, one world reached on every seed where dense reached two (FINDINGS 84).
+  The slot machinery is off under a code. Instincts named on senses are taught to the code as rows
+  (`Mind:teach`, used by `learnFrom`): pair features become the flag with every code number, priors are fitted
+  over the named senses' directions and mixes; memories and curious pairs on senses are skipped. Saves carry
+  `nRaw` and `codeSeed`; `load` refuses another code.
+- README rewritten for the flat mind, the code and the separable search; `scripts/mind` takes `CODE=B`.
+
 ## 0.5.9
 
 - Descriptors interact with outcome inputs rather than raw senses: under `pooledValue` the default set is the

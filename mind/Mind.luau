@@ -54,6 +54,21 @@ end
 function Mind.new(nIn: number, choices: { any }, o: any)
 	o = o or {}
 	local self = setmetatable({}, Mind)
+	-- CODE (o.code = B): the senses are read through a fixed random code of B numbers, a Gaussian mix drawn
+	-- once from o.codeSeed, and every tier works on the code. Measured on the held-out worlds: sixteen random
+	-- mixes of 37 senses learn twice as well as the senses themselves and reach every seed of a world the dense
+	-- mind reached on two seeds in six (FINDINGS 84). Cost is B squared whatever the game offers. The slot
+	-- machinery (groups, equivariant, pooledValue, sparse) is off under a code, since a code has no slots;
+	-- instincts named on senses are taught to the code as rows (see learnFrom). Nothing raw may sit beside the
+	-- code: appending raw senses to it broke learning in every trial.
+	if o.code then
+		o = table.clone(o)
+		o.groups, o.blocks, o.equivariant, o.pooledValue, o.sparse, o.localOutcome = nil, nil, nil, nil, nil, nil
+		self.nRaw = nIn
+		self.codeSeed = o.codeSeed or 1
+		self.R = Mind.drawCode(o.code, nIn, self.codeSeed)
+		nIn = o.code
+	end
 	local set = o.set or "OMECA"
 	self.has = {}
 	for ch in set:gmatch(".") do
@@ -479,6 +494,45 @@ end
 
 -- The senses as the models see them: the raw senses, then the couplings' predicted drift, then
 -- the hazards and their traces.
+-- A B-by-n Gaussian matrix scaled 1/sqrt(B), from a seed: the same code for the same seed and shape.
+function Mind.drawCode(B: number, n: number, seed: number): { { number } }
+	-- a small generator of its own, so the same seed draws the same code everywhere the mind runs
+	local state = (seed * 2654435761 + 1013904223) % 4294967296
+	local function next()
+		state = (state * 1664525 + 1013904223) % 4294967296
+		return (state // 65536) / 65536
+	end
+	local R = table.create(B)
+	for b = 1, B do
+		local row = table.create(n)
+		for i = 1, n do
+			-- Box-Muller
+			local u1, u2 = math.max(next(), 1e-12), next()
+			row[i] = math.sqrt(-2 * math.log(u1)) * math.cos(2 * math.pi * u2) / math.sqrt(B)
+		end
+		R[b] = row
+	end
+	return R
+end
+
+-- The senses as the mind reads them: through the code when there is one, else as they are.
+function Mind:encode(x: { number }): { number }
+	local R = self.R
+	if not R then
+		return x
+	end
+	local n = self.nRaw
+	local z = table.create(#R)
+	for b, row in ipairs(R) do
+		local s = 0
+		for i = 1, n do
+			s += row[i] * x[i]
+		end
+		z[b] = s
+	end
+	return z
+end
+
 function Mind:extend(x: { number }, out: { number }?): { number }
 	local X = out or {}
 	local n = self.nIn
@@ -1263,7 +1317,7 @@ function Mind:think(sensesOf, feasible)
 	local t0 = clock()
 	local xs, Xs = {}, {}
 	for a = 1, #self.choices[1].options do
-		xs[a] = sensesOf(a)
+		xs[a] = self:encode(sensesOf(a))
 		Xs[a] = self:extend(xs[a])
 	end
 	local x1 = xs[1]
@@ -1502,6 +1556,7 @@ end
 
 -- Settle what has come due. `totals` are the readings' totals now, `xNow` the senses now.
 function Mind:settle(totals: { number }, xNow: { number }, tick: number, over: boolean?)
+	xNow = self:encode(xNow)
 	local S = self.stats
 	if self.has.H then
 		for e = 1, #self.events do
@@ -2079,7 +2134,152 @@ end
 -- A prior sets a weight and how sure of it the creature starts; a feature declares a pair worth
 -- making; an effect says what an option does to a sense; a curious pair is searched first; a
 -- memory matches only on the senses it names. All of it stays revisable: priors, not rules.
+-- Under a code, an instinct named on senses has no input to land on: it is taught instead. Each declared pair
+-- of an option and a sense becomes the option's flag paired with every code number (their weighted sum is the
+-- flag paired with the sense's read-back), and the priors are fitted as rows over a small design of sense
+-- directions and options, counted `conf` times each. Memories and curious pairs named on senses are skipped.
+function Mind:teach(k, names: { string })
+	local O = self.O
+	local nRaw, B = self.nRaw, self.nIn
+	local function senseOf(name: string): number?
+		return table.find(names, name)
+	end
+	local function optionOf(name: string): (number?, number?)
+		for ci, c in ipairs(self.choices) do
+			for oo, o in ipairs(c.options) do
+				if name == c.name .. "=" .. o then
+					return ci, oo
+				end
+			end
+		end
+		return nil, nil
+	end
+	-- a term of the instinct: a sense, an option, or a pair of them
+	local function term(name: string)
+		local si = senseOf(name)
+		if si then
+			return { sense = si }
+		end
+		local ci, oo = optionOf(name)
+		if ci then
+			return { choice = ci, option = oo }
+		end
+		local op, a, b = name:match("^(%w+)%((.-),(.-)%)$")
+		if op and OPS[op] then
+			local ta, tb = term(a), term(b)
+			if ta and tb then
+				return { op = op, a = ta, b = tb }
+			end
+		end
+		return nil
+	end
+	local function eval(t, x: { number }, picks: { number }): number
+		if t.sense then
+			return x[t.sense]
+		elseif t.choice then
+			return if picks[t.choice] == t.option then 1 else 0
+		end
+		return OPS[t.op](eval(t.a, x, picks), eval(t.b, x, picks))
+	end
+	-- declared pairs: the flag with every code number
+	for _, pf in ipairs(k.features or {}) do
+		local ta, tb = term(pf.a), term(pf.b)
+		if ta and tb and OPS[pf.op] and pf.op == "mul" then
+			local flagT = if ta.choice then ta elseif tb.choice then tb else nil
+			local senseT = if ta.sense then ta elseif tb.sense then tb else nil
+			if flagT and senseT then
+				local fi = 1 + self.nXO + self.optIndex[flagT.choice][flagT.option] -- phi position of the flag
+				for b = 1, B do
+					local dup = false
+					for _, a in ipairs(self.acquired) do
+						if a.op == "mul" and a.i == fi - 1 and a.j == b then
+							dup = true
+							break
+						end
+					end
+					if not dup then
+						table.insert(self.acquired, { op = "mul", i = fi - 1, j = b, c = 0, forReading = "declared" })
+						RLS.grow(O, self.ridge) -- at the plain ridge: the rows below are what set them
+					end
+				end
+			end
+		end
+	end
+	-- the priors, as a function of raw senses and picks
+	local terms = {}
+	local senses, options = {}, {}
+	for _, pr in ipairs(k.priors or {}) do
+		local r = table.find(self.readings, pr.reading)
+		local t = term(pr.feature)
+		if r and t then
+			table.insert(terms, { r = r, w = pr.w, conf = pr.conf or 1, t = t })
+			local function collect(u)
+				if u.sense then
+					senses[u.sense] = true
+				elseif u.choice then
+					table.insert(options, { u.choice, u.option })
+				else
+					collect(u.a)
+					collect(u.b)
+				end
+			end
+			collect(t)
+		end
+	end
+	if #terms == 0 then
+		return
+	end
+	-- the design: the origin and each named sense's direction, under neutral picks and each named option
+	local xs = { table.create(nRaw, 0) }
+	local named = {}
+	for si in pairs(senses) do
+		local x = table.create(nRaw, 0)
+		x[si] = 1
+		table.insert(xs, x)
+		table.insert(named, si)
+	end
+	-- and mixes of the named senses, so the pairs learn to answer their own sense only
+	local state = 7
+	for _ = 1, 4 * #named do
+		local x = table.create(nRaw, 0)
+		for _, si in ipairs(named) do
+			state = (state * 1664525 + 1013904223) % 4294967296
+			x[si] = (state // 65536) / 32768 - 1
+		end
+		table.insert(xs, x)
+	end
+	local pickSets = { table.create(#self.choices, 1) }
+	for _, co in ipairs(options) do
+		local pk = table.create(#self.choices, 1)
+		pk[co[1]] = co[2]
+		table.insert(pickSets, pk)
+	end
+	local n0 = O.n
+	local reps = 0
+	for _, t in ipairs(terms) do
+		reps = math.max(reps, math.round(t.conf))
+	end
+	for _, x in ipairs(xs) do
+		local X = self:extend(self:encode(x))
+		for _, pk in ipairs(pickSets) do
+			local phi = self:phiO(X, pk)
+			local y = table.create(self.NRO, 0)
+			for _, t in ipairs(terms) do
+				y[t.r] += t.w * eval(t.t, x, pk)
+			end
+			RLS.update(O, phi, y, math.max(1, reps) * 8) -- counted well past the ridge, so the design is fitted rather than shrunk
+			self.stats.priors = (self.stats.priors or 0) + 1
+		end
+	end
+	O.n = n0 -- taught, not experienced: the row count stays what the creature has seen
+	self.lastThinkX = nil
+end
+
 function Mind:learnFrom(k, names: { string })
+	if self.R then
+		self:teach(k, names)
+		return
+	end
 	local O = self.O
 	for _, pf in ipairs(k.features or {}) do
 		local i, j = self:featureIndex(pf.a, names), self:featureIndex(pf.b, names)
@@ -2196,6 +2396,8 @@ end
 function Mind:save()
 	local out = {
 		nIn = self.nIn,
+		nRaw = self.nRaw,
+		codeSeed = self.codeSeed,
 		set = self.has,
 		O = RLS.save(self.O),
 		acquired = {},
@@ -2238,8 +2440,8 @@ function Mind:save()
 end
 
 function Mind:load(saved)
-	if saved.nIn ~= self.nIn then
-		error("[instinct] a saved mind with a different number of senses", 0)
+	if saved.nIn ~= self.nIn or (saved.nRaw or self.nRaw) ~= self.nRaw or (saved.codeSeed or self.codeSeed) ~= self.codeSeed then
+		error("[instinct] a saved mind with a different number of senses (or another code)", 0)
 	end
 	self.acquired = {}
 	for _, a in ipairs(saved.acquired or {}) do
