@@ -6,7 +6,7 @@ local function stage(name: string)
 	print(("[%6.2fs] %s"):format(os.clock() - t0, name))
 end
 stage("start; Vector3 is " .. tostring(Vector3))
-local Instinct = require("../mind")
+local Instinct = require("../src")
 stage("required mind")
 local Mind, Senses, Coach = Instinct.Mind, Instinct.Senses, Instinct.Coach
 local SLOTS = { "host", "item", "haz", "ally" }

@@ -7,7 +7,7 @@
 
 local process = require("@lune/process")
 local Vector3 = require("@lune/roblox").Vector3
-local Instinct = require("../mind")
+local Instinct = require("../src")
 local Mind, Senses, Coach = Instinct.Mind, Instinct.Senses, Instinct.Coach
 
 local EPIS = tonumber(process.args[1]) or 60
@@ -154,7 +154,7 @@ end
 -- pure noise at full strength. VGATE=1 gates the value the same way the physics is gated. With every
 -- reading unearned the value is flat, so the creature spreads over the feasible combinations instead of
 -- chasing whichever way the noise happens to point.
-local RLSmod = require("../mind/RLS")
+local RLSmod = require("../src/RLS")
 if process.env.VGATE == "1" then
 	function Mind.valueOf(self, phi)
 		local O, v = self.O, 0
@@ -168,10 +168,97 @@ if process.env.VGATE == "1" then
 	end
 end
 
+if process.env.VGATE == "2" then
+	-- surgical variant: the value is flat only while the model is unearned (n < 30, where
+	-- RLS.confidence is exactly 0), and raw thereafter. VGATE=1 scales every reading by its
+	-- confidence forever, which permanently reweights the preferences of a mature creature.
+	function Mind.valueOf(self, phi)
+		local O = self.O
+		if O.n < 30 then
+			return 0
+		end
+		local v = 0
+		for k = 1, self.NRO do
+			local w = self.pref[k]
+			if w ~= 0 then
+				v += w * RLSmod.predict(O, k, phi)
+			end
+		end
+		return v
+	end
+end
+
+if process.env.VGATE == "3" then
+	-- VGATE=1 does two things at once: it reweights the readings *relative* to each other by how
+	-- predictable each is, and it damps the value's overall scale (confidence is < 1 forever). Only the
+	-- relative part can matter to a single tick's argmax; the global scale matters only against the
+	-- beam's `gamma * conf * worth(X2)` term. VGATE=3 keeps the relative weighting and normalises the
+	-- scale away, so the two effects can be told apart.
+	function Mind.valueOf(self, phi)
+		local O, v = self.O, 0
+		local sum, cnt = 0, 0
+		for k = 1, self.NRO do
+			if self.pref[k] ~= 0 then
+				sum += RLSmod.confidence(O, k)
+				cnt += 1
+			end
+		end
+		local mean = if cnt > 0 then sum / cnt else 0
+		for k = 1, self.NRO do
+			local w = self.pref[k]
+			if w ~= 0 then
+				local g = if mean > 1e-6 then RLSmod.confidence(O, k) / mean else 1
+				v += w * g * RLSmod.predict(O, k, phi)
+			end
+		end
+		return v
+	end
+end
+
+if process.env.VGATE == "4" then
+	-- VGATE=3's normalisation divides by the *unweighted* mean confidence, so when two of three readings
+	-- are unpredictable (world 2 has no hostiles, so `dealt` and `taken` never move and their confidence
+	-- is exactly 0) the surviving reading is scaled by 3 and the whole value inflates. The value is
+	-- compared against the raw score by `surprise`, `trackError` and the memory, so that scale is not
+	-- free. VGATE=4 keeps the same relative weighting but rescales so the objective's total weight is
+	-- unchanged: sum |pref_k * g_k| == sum |pref_k|.
+	function Mind.valueOf(self, phi)
+		local O = self.O
+		local raw, tot = 0, 0
+		for k = 1, self.NRO do
+			local w = self.pref[k]
+			if w ~= 0 then
+				raw += math.abs(w) * RLSmod.confidence(O, k)
+				tot += math.abs(w)
+			end
+		end
+		if not (raw > 1e-9) then
+			-- nothing earned yet: fall back to the plain value rather than a zero one
+			local v = 0
+			for k = 1, self.NRO do
+				local w = self.pref[k]
+				if w ~= 0 then
+					v += w * RLSmod.predict(O, k, phi)
+				end
+			end
+			return v
+		end
+		local scale = tot / raw
+		local v = 0
+		for k = 1, self.NRO do
+			local w = self.pref[k]
+			if w ~= 0 then
+				v += w * RLSmod.confidence(O, k) * scale * RLSmod.predict(O, k, phi)
+			end
+		end
+		return v
+	end
+end
+
 -- ------------------------------------------------------------------ the creature
 local GROUPS = Senses.groups(SLOTS, { "timeLeft", "armed" })
 local BLOCKS = if process.env.BLOCKS == "1" then GROUPS else nil
-local mind = Mind.new(#NAMES, CHOICES, { set = "OMECA", readings = READINGS, pref = PREF, horizon = 24, step = 12, beam = 10, blocks = BLOCKS, groups = GROUPS, sparse = process.env.SPARSE == "1", equivariant = process.env.EQUIV == "1", pooledValue = process.env.POOL == "1" })
+local mind = Mind.new(#NAMES, CHOICES, { set = "OMECA", readings = READINGS, pref = PREF, horizon = 24, step = 12, beam = 10, blocks = BLOCKS, groups = GROUPS, surprise = tonumber(process.env.SURPRISE) or 5, sparse = process.env.SPARSE == "1", equivariant = process.env.EQUIV == "1", pooledValue = process.env.POOL == "1" })
 local coach = Coach.new(mind, { explore = 5, every = 10, floor = nil })
 
 local function episode(learn)
@@ -239,7 +326,7 @@ print(("RESULT world %d: %s, last 10 episodes %.0f (greedy %.0f), %.0f us a thin
 
 -- save and reload: the creature is itself afterwards
 local saved = mind:save()
-local again = Mind.new(#NAMES, CHOICES, { set = "OMECA", readings = READINGS, pref = PREF, horizon = 24, step = 12, beam = 10, blocks = BLOCKS, groups = GROUPS, sparse = process.env.SPARSE == "1", equivariant = process.env.EQUIV == "1", pooledValue = process.env.POOL == "1" })
+local again = Mind.new(#NAMES, CHOICES, { set = "OMECA", readings = READINGS, pref = PREF, horizon = 24, step = 12, beam = 10, blocks = BLOCKS, groups = GROUPS, surprise = tonumber(process.env.SURPRISE) or 5, sparse = process.env.SPARSE == "1", equivariant = process.env.EQUIV == "1", pooledValue = process.env.POOL == "1" })
 again:load(saved)
 again.exploring = false
 local check = 0

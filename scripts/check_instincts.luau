@@ -1,6 +1,6 @@
 --!nonstrict
 -- Do declared instincts land on the inputs they name, under the pooled value as under the dense one?
-local Instinct = require("../mind")
+local Instinct = require("../src")
 local Mind, Senses = Instinct.Mind, Instinct.Senses
 local SLOTS = { "host", "item", "haz", "ally" }
 local NAMES = Senses.layout(SLOTS, { "timeLeft", "armed" })

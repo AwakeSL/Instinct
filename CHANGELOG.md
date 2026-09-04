@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.3
+
+- The package folder is `src/` (it was `mind/`); the project file, wally include and the scripts' requires follow.
+
 ## 0.7.2
 
 - Memory of individuals, as it now works: every individual's numbers are a fixed random face and the outcome

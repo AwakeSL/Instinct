@@ -1,8 +1,8 @@
 [package]
 name = "awakesl/instinct"
 description = "Creatures that learn what their senses predict, what their acts do, and what to do about it."
-version = "0.7.2"
+version = "0.7.3"
 license = "MIT"
 registry = "https://github.com/UpliftGames/wally-index"
 realm = "shared"
-include = ["mind", "mind/**", "default.project.json", "wally.toml", "README.md", "LICENSE"]
+include = ["src", "src/**", "default.project.json", "wally.toml", "README.md", "LICENSE"]

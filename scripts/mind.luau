@@ -7,7 +7,7 @@
 
 local process = require("@lune/process")
 local Vector3 = require("@lune/roblox").Vector3
-local Instinct = require("../mind")
+local Instinct = require("../src")
 local Mind, Senses, Coach = Instinct.Mind, Instinct.Senses, Instinct.Coach
 
 -- CHECKSEP=1: check the separable pick search against the full worth() on every combination scored
@@ -224,7 +224,7 @@ end
 -- ------------------------------------------------------------------ the creature
 local GROUPS = Senses.groups(SLOTS, { "timeLeft", "armed" }, SUBJ)
 local BLOCKS = if process.env.BLOCKS == "1" then GROUPS else nil
-local OPTS = { set = "OMECA", subjects = if SUBJ > 0 then { dim = SUBJ, learn = tonumber(process.env.SUBJLEARN) or 0.05 } else nil, code = tonumber(process.env.CODE), calibrated = process.env.CALIB ~= "0", separable = process.env.SEP ~= "0", centredFlags = process.env.CENTRED == "1", optionBlock = process.env.OPTBLOCK == "1", effectsInputs = process.env.EFFIN, lms = tonumber(process.env.LMS), poolRaw = process.env.POOLRAW ~= "0", readings = READINGS, pref = PREF, horizon = 24, step = 12, beam = tonumber(process.env.BEAM) or 10, blocks = BLOCKS, groups = GROUPS, sparse = process.env.SPARSE == "1", equivariant = process.env.EQUIV == "1", pooledValue = process.env.POOL == "1" }
+local OPTS = { set = "OMECA", subjects = if SUBJ > 0 then { dim = SUBJ, learn = tonumber(process.env.SUBJLEARN) or 0 } else nil, code = tonumber(process.env.CODE), calibrated = process.env.CALIB ~= "0", separable = process.env.SEP ~= "0", centredFlags = process.env.CENTRED == "1", optionBlock = process.env.OPTBLOCK == "1", effectsInputs = process.env.EFFIN, lms = tonumber(process.env.LMS), poolRaw = process.env.POOLRAW ~= "0", readings = READINGS, pref = PREF, horizon = 24, step = 12, beam = tonumber(process.env.BEAM) or 10, blocks = BLOCKS, groups = GROUPS, sparse = process.env.SPARSE == "1", equivariant = process.env.EQUIV == "1", pooledValue = process.env.POOL == "1" }
 local mind = Mind.new(#NAMES, CHOICES, OPTS)
 if SUBJ > 0 then
 	WHO = mind:whoFn()
@@ -316,6 +316,14 @@ for g = 1, EPIS do
 		print(("  episodes %d-%d: %.0f"):format(g - 9, g, sum / 10))
 		sum = 0
 	end
+end
+if SUBJ > 0 then
+	local held = {}
+	for id, e in pairs(mind:subjectList()) do
+		table.insert(held, ("%s opinion %+.1f seen %d"):format(tostring(id), mind:opinion(id), e.seen))
+	end
+	table.sort(held)
+	print("  holds: " .. table.concat(held, "; "))
 end
 print(("RESULT world %d: %s, last 10 episodes %.0f (greedy %.0f), %.0f us a think, %.1f s in all, rebirths %d (%d stalled), acquired: %s"):format(
 	WORLD,

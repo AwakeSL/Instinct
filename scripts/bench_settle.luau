@@ -2,7 +2,7 @@
 -- How long a settle (learning) takes as the creature widens: slots of seven senses each.
 --     lune run scripts/bench_settle [slots]   env: EQUIV=1 POOL=1 for the flat mind
 local process = require("@lune/process")
-local Instinct = require("../mind")
+local Instinct = require("../src")
 local Mind, Senses = Instinct.Mind, Instinct.Senses
 
 local NSLOTS = tonumber(process.args[1]) or 4

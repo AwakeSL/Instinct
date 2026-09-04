@@ -1,6 +1,6 @@
 {
   "name": "Instinct",
   "tree": {
-    "$path": "mind"
+    "$path": "src"
   }
 }

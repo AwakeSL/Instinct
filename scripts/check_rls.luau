@@ -1,7 +1,7 @@
 --!nonstrict
 -- Checks RLS.update against the plain textbook update (dense matvec, full downdate, one row at a time):
 -- the zero-skipping, the mirrored downdate and the closed-form repeated row must agree to rounding.
-local RLS = require("../mind/RLS")
+local RLS = require("../src/RLS")
 
 local F, NR = 40, 3
 local function plain(m, phi, y)

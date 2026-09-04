@@ -2,7 +2,7 @@
 -- How long a think takes as the act set grows, with and without the separable pick search.
 --     lune run scripts/bench_think [acts]   env: EQUIV=1 POOL=1 for the flat mind
 local process = require("@lune/process")
-local Instinct = require("../mind")
+local Instinct = require("../src")
 local Mind, Senses = Instinct.Mind, Instinct.Senses
 
 local ACTS = tonumber(process.args[1]) or 200

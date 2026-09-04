@@ -2,7 +2,7 @@
 -- Where a settle's time goes, by model: wraps RLS.update and times each model kind.
 --     lune run scripts/prof_settle [slots]   env: EQUIV=1 POOL=1 (flat), CODE=16 (code)
 local process = require("@lune/process")
-local Instinct = require("../mind")
+local Instinct = require("../src")
 local Mind, Senses, RLS = Instinct.Mind, Instinct.Senses, Instinct.RLS
 
 local NSLOTS = tonumber(process.args[1]) or 3

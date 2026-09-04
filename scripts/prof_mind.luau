@@ -7,7 +7,7 @@
 
 local process = require("@lune/process")
 local Vector3 = require("@lune/roblox").Vector3
-local Instinct = require("../mind")
+local Instinct = require("../src")
 local Mind, Senses, Coach = Instinct.Mind, Instinct.Senses, Instinct.Coach
 
 local EPIS = tonumber(process.args[1]) or 60
