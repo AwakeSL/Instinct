@@ -112,6 +112,12 @@ worlds (FINDINGS 76-78). Two configurations hold their learning and are flat in 
   code; instincts named on senses are taught to it as rows (below). Memories and curious pairs named on senses
   are skipped.
 
+Which to use: the dense mind (no options) up to about sixty senses where instincts matter; the flat mind for a
+wide creature that still needs instincts by name; the code for a creature that learns from nothing, at any width
+(instincts can be taught to a code, but blurred: a code has fewer numbers than senses). Row calibration is on
+by default in all three (`calibrated = false` turns it off): outcome rows weighted 1/H and effects rows 1/STEP,
+which took one world from five seeds in eight learning to eight in eight (FINDINGS 85).
+
 Both are cheap enough that the cost that remains is the act count: the first pass of a think is separable
 (a base plus one number a chosen option, exact), so 700 acts by 20 moves cost 3.7 ms a think in Lune rather
 than 274 (`separable = false` restores the plain pass). The decision rate is the other free cut: deciding every
