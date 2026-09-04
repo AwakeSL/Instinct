@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.1
+
+- Fix: `think` cleared the slot identities before reading them, so a game that encodes the senses once
+  before `think` (as the trials do) never revised a subject. The identities are now taken as the encoder
+  last set them, and an empty slot clears its entry.
+
 ## 0.7.0
 
 - Memory of individuals: `subjects = { dim = 4, learn = 0.05, forget = 0 }`. Every named thing the creature

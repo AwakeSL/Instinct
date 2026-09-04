@@ -74,6 +74,9 @@ local function slot(x: { number }, me: Self, e: Entity?, range: number, who: any
 		for _ = 1, 7 + D do
 			table.insert(x, 0)
 		end
+		if who and k then
+			who(nil, k) -- nobody here: the mind's note of who is in this slot is cleared
+		end
 		return
 	end
 	local dx, dz = e.position.X - me.position.X, e.position.Z - me.position.Z
@@ -91,7 +94,7 @@ local function slot(x: { number }, me: Self, e: Entity?, range: number, who: any
 	table.insert(x, e.extra or 0)
 	if D > 0 then
 		-- what this creature has learned about the individual here (zeros for a stranger or an unnamed thing)
-		local d = if who and e.id ~= nil then who(e.id, k) else nil
+		local d = if who then who(e.id, k) else nil
 		for q = 1, D do
 			table.insert(x, if d then d[q] else 0)
 		end

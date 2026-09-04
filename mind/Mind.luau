@@ -1191,6 +1191,9 @@ function Mind:whoFn()
 		if slot then
 			self.idsNow[slot] = id
 		end
+		if id == nil then
+			return nil
+		end
 		local d = self.subjectOf[id]
 		if not d then
 			d = table.create(self.subjectDim, 0)
@@ -1574,14 +1577,13 @@ function Mind:think(sensesOf, feasible, reflex: boolean?)
 	local xs, Xs = {}, {}
 	local idsFor = if self.subjectOf then {} else nil
 	for a = 1, #self.choices[1].options do
-		if idsFor then
-			self.idsNow = {}
-		end
 		local rawX = sensesOf(a)
 		xs[a] = self:encode(rawX)
 		Xs[a] = self:extend(xs[a])
 		if idsFor then
-			idsFor[a] = { ids = self.idsNow, raw = rawX }
+			-- the identities the encoder last saw in the slots (the encoder clears an empty slot's entry, so
+			-- this is exact whether the senses were encoded inside this call or just before it)
+			idsFor[a] = { ids = table.clone(self.idsNow), raw = rawX }
 		end
 	end
 	local x1 = xs[1]
