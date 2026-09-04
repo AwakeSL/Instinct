@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.6
+
+- Separable pick search (on by default, `separable = false` to disable): the first pass scores every
+  combination as a base plus one number per chosen option instead of a full prediction each, exactly (max error
+  1.4e-14 against the full scoring). Think at 700 acts x 20: 274 ms -> 3.7 ms in Lune. The beam takes its
+  candidates by selection rather than a full sort, ties drawn at random.
+- `scripts/bench_think.luau` measures think against the act count; `CHECKSEP=1 lune run scripts/mind` checks the
+  separable scoring against the full one.
+
 ## 0.5.5
 
 - Tied couplings under `equivariant = true`: one drift law for the self readings and one shared across slots,

@@ -77,6 +77,12 @@ function Mind.new(nIn: number, choices: { any }, o: any)
 	end
 	self.kU = o.kU or 1 -- curiosity, if the set has U: value += kU * spread
 	self.beam = o.beam or 10
+	-- SEPARABLE pick search: the value is linear in phi and phi is additive in the picks (one-hot flags, the
+	-- pooled field-by-option sums, the descriptors' sums), so a combination's worth is a base plus one number
+	-- per chosen option, and the first pass costs the options rather than their product. An identity: the same
+	-- combinations come back (to rounding). Acquired features pairing two choices are the one exception and are
+	-- evaluated per combination. Off with o.separable = false, or whenever the set has U (the spread is not additive).
+	self.separable = o.separable ~= false
 	self.gamma = o.gamma or 0.7 -- how much the projected next step counts
 	self.surprise = o.surprise or 5 -- a row this far from its prediction is a surprise
 	self.memory = if self.has.M then (o.memory or 200) else 0
@@ -310,12 +316,14 @@ function Mind.new(nIn: number, choices: { any }, o: any)
 	end
 	rec(1, {})
 	self.optIndex = {}
+	self.optChoice, self.optLocal = {}, {}
 	local k = 0
 	for ci, c in ipairs(choices) do
 		self.optIndex[ci] = {}
 		for oo = 1, #c.options do
 			k += 1
 			self.optIndex[ci][oo] = k
+			self.optChoice[k], self.optLocal[k] = ci, oo
 		end
 	end
 	self.MEM, self.FLAT = {}, {}
@@ -960,6 +968,254 @@ function Mind:worth(X: { number }, picks: { number }, phi: { number }, plain: bo
 	return v
 end
 
+-- ------------------------------------------------------------------ separable pick search
+
+-- Which choice an outcome input depends on: nil for none, a choice index for one, false for several (the
+-- descriptors sum over every choice).
+function Mind:pickDep(idx: number): any
+	local nXO, nOpt = self.nXO, self.nOpt
+	if idx <= 1 + nXO then
+		return nil
+	elseif idx <= 1 + nXO + nOpt then
+		return self.optChoice[idx - 1 - nXO]
+	elseif idx <= 1 + nXO + nOpt + self.nPool then
+		local r = idx - (1 + nXO + nOpt) - self.poolKinds * #self.poolCopies * self.poolSize
+		if r <= 0 then
+			return nil
+		end
+		return self.optChoice[(r - 1) // self.poolSize + 1]
+	elseif idx <= self.FO then
+		return false
+	end
+	local a = self.acquired[idx - self.FO]
+	local di, dj = self:pickDep(a.i + 1), self:pickDep(a.j + 1)
+	if di == nil then
+		return dj
+	elseif dj == nil or di == dj then
+		return di
+	end
+	return false
+end
+
+-- One outcome input for combination p on the context of a target option (its senses, the pick-free entries
+-- and the pooled slot sums), without building phi.
+local function sepEntry(self, ctx, idx: number, p: { number }): number
+	local nXO, nOpt = self.nXO, self.nOpt
+	if idx <= 1 + nXO then
+		return ctx.phiB[idx]
+	elseif idx <= 1 + nXO + nOpt then
+		local g = idx - 1 - nXO
+		return if p[self.optChoice[g]] == self.optLocal[g] then 1 else 0
+	elseif idx <= 1 + nXO + nOpt + self.nPool then
+		local size = self.poolSize
+		local r = idx - (1 + nXO + nOpt) - self.poolKinds * #self.poolCopies * size
+		if r <= 0 then
+			return ctx.phiB[idx]
+		end
+		local g = (r - 1) // size + 1
+		return if p[self.optChoice[g]] == self.optLocal[g] then ctx.poolSum[r - (g - 1) * size] else 0
+	elseif idx <= self.FO then
+		local D = self.descrDim
+		local r = idx - (1 + nXO + nOpt + self.nPool)
+		local q, i
+		if r <= D then
+			q = r
+		else
+			local nDS = #self.descrSenses
+			q = (r - D - 1) // nDS + 1
+			i = self.descrSenses[(r - D - 1) % nDS + 1]
+		end
+		local acc = 0
+		for ci = 1, #self.choices do
+			local d = self.descriptors[self.optIndex[ci][p[ci]]]
+			if d then
+				acc += d[q]
+			end
+		end
+		return if i then acc * ctx.X[i] else acc
+	end
+	local a = self.acquired[idx - self.FO]
+	return OPS[a.op](sepEntry(self, ctx, a.i + 1, p), sepEntry(self, ctx, a.j + 1, p))
+end
+
+-- Scores every feasible combination into `scored` ({ p, v }), as worth() would, at a base plus one number a
+-- chosen option (plus the few acquired features that pair two choices, evaluated per combination).
+function Mind:scoreCombos(Xs: { { number } }, feasible, scored)
+	local O = self.O
+	local F, NRO, FO = O.F, self.NRO, self.FO
+	local nXO, nOpt, nPool = self.nXO, self.nOpt, self.nPool
+	local choices = self.choices
+	local nCh = #choices
+	-- the value's direction: value(phi) = u . phi
+	local u = self.uBuf
+	if not u then
+		u = {}
+		self.uBuf = u
+	end
+	for f = 1, F do
+		u[f] = 0
+	end
+	for k = 1, NRO do
+		local w = self.pref[k]
+		if w ~= 0 then
+			local W = O.W[k]
+			if O.ins then
+				for _, i in O.ins[k] do
+					u[i] += w * W[i]
+				end
+			else
+				for f = 1, F do
+					u[f] += w * W[f]
+				end
+			end
+		end
+	end
+	local pooled = self.pooledValue
+	local size, kinds = self.poolSize, self.poolKinds
+	local nc = if pooled then #self.poolCopies else 0
+	local poolOptBase = 1 + nXO + nOpt + (if pooled then kinds * nc * size else 0)
+	local descr = self.descr
+	local D = if descr then self.descrDim else 0
+	local dBase = 1 + nXO + nOpt + nPool
+	local ds = self.descrSenses
+	local ctxs, bases, deltas, cross = {}, {}, {}, {}
+	for a = 1, #choices[1].options do
+		local X = Xs[a]
+		-- the pick-free part of phi, the rest zero
+		local phiB = table.create(FO, 0)
+		phiB[1] = 1
+		if pooled then
+			for q, i in ipairs(self.poolSelf) do
+				phiB[q + 1] = X[i]
+			end
+		else
+			for i = 1, self.nX do
+				phiB[i + 1] = X[i]
+			end
+		end
+		local poolSum
+		if pooled then
+			poolSum = table.create(size, 0)
+			local base = 1 + nXO + nOpt
+			local copies = self.poolCopies
+			for g, B in ipairs(self.poolSlots) do
+				if X[B[1]] ~= 0 then
+					local kind = math.min(g, kinds) - 1
+					for c, off in ipairs(copies) do
+						local kb = base + (kind * nc + (c - 1)) * size
+						for q, i in ipairs(B) do
+							phiB[kb + q] += X[off + i] or 0
+						end
+					end
+					for q, i in ipairs(B) do
+						poolSum[q] += X[i]
+					end
+				end
+			end
+		end
+		local ctx = { X = X, phiB = phiB, poolSum = poolSum }
+		ctxs[a] = ctx
+		local b = 0
+		for f = 1, FO do
+			local v = phiB[f]
+			if v ~= 0 then
+				b += u[f] * v
+			end
+		end
+		-- a descriptor's worth, its own and through the senses it is read against
+		local gq
+		if descr then
+			gq = table.create(D, 0)
+			local nDS = #ds
+			for q = 1, D do
+				local g = u[dBase + q]
+				local row = dBase + D + (q - 1) * nDS
+				for t, i in ipairs(ds) do
+					g += u[row + t] * X[i]
+				end
+				gq[q] = g
+			end
+		end
+		-- one number a chosen option
+		local delta = {}
+		for ci, c in ipairs(choices) do
+			local dc = {}
+			for oo = 1, #c.options do
+				local g = self.optIndex[ci][oo]
+				local v = u[1 + nXO + g]
+				if pooled then
+					local ob = poolOptBase + (g - 1) * size
+					for q = 1, size do
+						v += u[ob + q] * poolSum[q]
+					end
+				end
+				if descr then
+					local dd = self.descriptors[g]
+					if dd then
+						for q = 1, D do
+							v += dd[q] * gq[q]
+						end
+					end
+				end
+				dc[oo] = v
+			end
+			delta[ci] = dc
+		end
+		-- the acquired features: pick-free ones into the base, one-choice ones into that choice's numbers
+		local scratch = table.create(nCh, 1)
+		for f, _ in ipairs(self.acquired) do
+			local uf = u[FO + f]
+			if uf ~= 0 then
+				local dep = self:pickDep(FO + f)
+				if dep == nil then
+					b += uf * sepEntry(self, ctx, FO + f, scratch)
+				elseif dep then
+					local dc = delta[dep]
+					for oo = 1, #choices[dep].options do
+						scratch[dep] = oo
+						dc[oo] += uf * sepEntry(self, ctx, FO + f, scratch)
+					end
+					scratch[dep] = 1
+				elseif a == 1 then
+					table.insert(cross, { idx = FO + f, u = uf })
+				end
+			end
+		end
+		bases[a] = b
+		deltas[a] = delta
+	end
+	local pool = self.scoredPool
+	if not pool then
+		pool = {}
+		self.scoredPool = pool
+	end
+	local n = 0
+	for _, p in ipairs(self.combos) do
+		if not feasible or feasible(p) then
+			local a = p[1]
+			local v = bases[a]
+			local delta = deltas[a]
+			for ci = 1, nCh do
+				v += delta[ci][p[ci]]
+			end
+			if #cross > 0 then
+				local ctx = ctxs[a]
+				for _, cr in ipairs(cross) do
+					v += cr.u * sepEntry(self, ctx, cr.idx, p)
+				end
+			end
+			n += 1
+			local e = pool[n]
+			if not e then
+				e = {}
+				pool[n] = e
+			end
+			e.p, e.v = p, v
+			scored[n] = e
+		end
+	end
+end
+
 -- ------------------------------------------------------------------ think
 
 -- sensesOf(target) returns the raw senses as if that target option were taken (the first choice is
@@ -997,9 +1253,13 @@ function Mind:think(sensesOf, feasible)
 	-- first step: every combination the world would accept
 	local scored = {}
 	local phi = {}
-	for _, p in ipairs(self.combos) do
-		if not feasible or feasible(p) then
-			table.insert(scored, { p = p, v = self:worth(Xs[p[1]], p, phi) })
+	if self.separable and not self.has.U then
+		self:scoreCombos(Xs, feasible, scored)
+	else
+		for _, p in ipairs(self.combos) do
+			if not feasible or feasible(p) then
+				table.insert(scored, { p = p, v = self:worth(Xs[p[1]], p, phi) })
+			end
 		end
 	end
 	if #scored == 0 then
@@ -1007,12 +1267,28 @@ function Mind:think(sensesOf, feasible)
 	end
 	-- second step: the best BEAM extended by their projected next senses, held
 	if self.has.E then
-		table.sort(scored, function(a, b)
-			return a.v > b.v
-		end)
+		-- the best BEAM to the front, in order (a selection, not a sort: the rest need no order)
+		-- the best BEAM to the front, in order (a selection, not a sort: the rest need no order); ties drawn
+		-- at random so the same combinations are not always the ones looked ahead on
+		local nb = math.min(self.beam, #scored)
+		for i = 1, nb do
+			local bi, bv, ties = i, scored[i].v, 1
+			for j = i + 1, #scored do
+				local v = scored[j].v
+				if v > bv then
+					bi, bv, ties = j, v, 1
+				elseif v == bv then
+					ties += 1
+					if math.random(ties) == 1 then
+						bi = j
+					end
+				end
+			end
+			scored[i], scored[bi] = scored[bi], scored[i]
+		end
 		local nxt = {}
 		local caches = {} -- one effects cache per target option's senses
-		for k = 1, math.min(self.beam, #scored) do
+		for k = 1, nb do
 			local s = scored[k]
 			local a = s.p[1]
 			local cache = caches[a]

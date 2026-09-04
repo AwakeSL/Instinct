@@ -10,6 +10,24 @@ local Vector3 = require("@lune/roblox").Vector3
 local Instinct = require("../mind")
 local Mind, Senses, Coach = Instinct.Mind, Instinct.Senses, Instinct.Coach
 
+-- CHECKSEP=1: check the separable pick search against the full worth() on every combination scored
+if process.env.CHECKSEP == "1" then
+	local orig = Mind.scoreCombos
+	local maxErr, n = 0, 0
+	Mind.scoreCombos = function(self, Xs, feasible, scored)
+		orig(self, Xs, feasible, scored)
+		local phi = {}
+		for _, sc in ipairs(scored) do
+			local v = self:worth(Xs[sc.p[1]], sc.p, phi)
+			maxErr = math.max(maxErr, math.abs(v - sc.v))
+			n += 1
+		end
+		if n % 20000 < #scored then
+			print(("CHECKSEP %d combinations, max error %.3g"):format(n, maxErr))
+		end
+	end
+end
+
 local EPIS = tonumber(process.args[1]) or 60
 local SEED = tonumber(process.env.SEED) or 1
 local WORLD = tonumber(process.env.WORLD) or 2
