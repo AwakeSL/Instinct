@@ -5364,3 +5364,20 @@ harness at six seeds with a halving of rows to threshold. Paired on eight seeds 
 Same score when it learns, and the seeds that used to fail world 24 now learn it. One scalar on two models, so
 it is the default from 0.6.2 (`calibrated = false` turns it off). The held-out three-seed verdict in 83 stands
 corrected as unresolved, not negative.
+
+## 86. Posterior-sampled exploration (Kestrel's RLSVI): noise on the outcome targets, drawn once an episode
+
+RLSVI=sigma in tabmind3: every outcome row's target carries sigma times the reading's spread times a Gaussian
+drawn once an episode per reading, shrinking as 1/sqrt(1 + rows/300); the greedy policy then acts on a draw from
+the model's own uncertainty. Held-out battery, six seeds, on the OMECTA newborn (reached / seeds, then the
+finals), against the newborn's 9/9, 7/9, 5/9, 4/9:
+
+| | 18 | 20 | 24 | 28 |
+|---|---|---|---|---|
+| sigma 0.5 | 3/6 (mean 123) | 4/6 (581) | 3/6 (352) | 0/6 (79) |
+| sigma 1.5 | 1/6 (82) | 2/6 (301) | 2/6 (221) | 4/6 (332) |
+
+Fewer seeds reach the threshold at either scale on three worlds of four; the held draw did not do what the
+bonuses and the dither could not. With Kestrel's noise floor in mind this is "no sign of a gain", not a proof of
+harm, but it is the seventh exploration idea to read below the newborn, and the line stays closed. RLSVI stays in
+the prototype.
