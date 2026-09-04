@@ -2062,6 +2062,23 @@ end
 
 -- The index in phi of a named input: a sense, "choice=option", or an acquired "op(a,b)".
 function Mind:featureIndex(name: string, names: { string }): number?
+	if not self.pooledValue then
+		local kind, base = name:match("^(%a+):(.+)$")
+		if kind == "drift" and self.has.C then
+			local f = self:featureIndex(base, names)
+			return if f and f - 1 <= self.nIn then f + self.nIn else nil
+		elseif kind == "trend" and self.trend then
+			local f = self:featureIndex(base, names)
+			local t = self:trendOffset()
+			return if f and f - 1 <= self.nIn and t then f + t else nil
+		end
+	end
+	if self.R then
+		local c = tonumber(name:match("^code(%d+)$"))
+		if c and c >= 1 and c <= self.nIn then
+			return c + 1
+		end
+	end
 	for i, n in ipairs(names) do
 		if n == name then
 			if not self.pooledValue then
@@ -2154,6 +2171,16 @@ function Mind:inputName(i: number, names: { string }): string
 		end
 	elseif i <= self.nIn then
 		return names[i]
+	elseif i <= self.nX then
+		-- the drift and trend copies of a sense, so distilled knowledge carries them
+		local n = self.nIn
+		if self.has.C and i <= 2 * n then
+			return "drift:" .. self:inputName(i - n, names)
+		end
+		local t = self:trendOffset()
+		if t and i > t and i <= t + n then
+			return "trend:" .. self:inputName(i - t, names)
+		end
 	end
 	local k = self.nXO
 	for _, c in ipairs(self.choices) do
@@ -2345,8 +2372,33 @@ end
 
 function Mind:learnFrom(k, names: { string })
 	if self.R then
-		self:teach(k, names)
-		return
+		-- knowledge from a creature of the same code (distilled) names code numbers, flags and their pairs and
+		-- lands directly; what names senses is taught
+		local direct = { priors = {}, features = {}, curious = {}, memories = k.memories, effects = k.effects, drift = k.drift }
+		local taught = { priors = {}, features = {} }
+		local function onCode(name: string): boolean
+			for _, sn in ipairs(names) do
+				if name == sn or name:find("[(,]" .. sn:gsub("%p", "%%%0") .. "[,)]") then
+					return false
+				end
+			end
+			return true
+		end
+		for _, pf in ipairs(k.features or {}) do
+			table.insert(if onCode(pf.a) and onCode(pf.b) then direct.features else taught.features, pf)
+		end
+		for _, pr in ipairs(k.priors or {}) do
+			table.insert(if onCode(pr.feature) then direct.priors else taught.priors, pr)
+		end
+		for _, cu in ipairs(k.curious or {}) do
+			if onCode(cu.a) and onCode(cu.b) then
+				table.insert(direct.curious, cu)
+			end
+		end
+		if #taught.priors > 0 or #taught.features > 0 then
+			self:teach(taught, names)
+		end
+		k = direct
 	end
 	local O = self.O
 	for _, pf in ipairs(k.features or {}) do
@@ -2393,6 +2445,52 @@ function Mind:learnFrom(k, names: { string })
 	if #self.curious > 0 then
 		self.acqEarly = 1000 -- curious pairs are searched early, but not before there is anything to explain
 	end
+	if k.drift and self.has.C and self.Cm and #k.drift.W == self.nIn and #k.drift.W[1] == self.Cm.F then
+		local Cm = self.Cm
+		for r = 1, self.nIn do
+			Cm.W[r] = table.clone(k.drift.W[r])
+			Cm.var[r] = k.drift.var[r] or Cm.var[r]
+			Cm.err[r] = k.drift.err[r] or Cm.err[r]
+		end
+		Cm.n = math.max(Cm.n, math.min(k.drift.n, 30))
+		self.stats.driftPriors = self.nIn
+	end
+	local function takeRows(m, e): boolean
+		if not (m and e and #e.W == m.NR and #e.W[1] == m.F) then
+			return false
+		end
+		for r = 1, m.NR do
+			m.W[r] = table.clone(e.W[r])
+			m.var[r] = e.var[r] or m.var[r]
+			m.err[r] = e.err[r] or m.err[r]
+		end
+		m.n = math.max(m.n, math.min(e.n, 30))
+		return true
+	end
+	if k.effects and self.has.E and self.E then
+		for key, e in pairs(k.effects) do
+			if takeRows(self.E[key], e) then
+				self.stats.effectPriors = (self.stats.effectPriors or 0) + 1
+			end
+		end
+		self.effectsCache = nil
+	end
+	if k.tied and self.equivariant then
+		for key, e in pairs(k.tied.EG or {}) do
+			if takeRows(self.EG[key], e) then
+				self.stats.effectPriors = (self.stats.effectPriors or 0) + 1
+			end
+		end
+		for key, e in pairs(k.tied.ES or {}) do
+			if takeRows(self.ES[key], e) then
+				self.stats.effectPriors = (self.stats.effectPriors or 0) + 1
+			end
+		end
+		if k.tied.CG and takeRows(self.CG, k.tied.CG) and takeRows(self.CS, k.tied.CS) then
+			self.stats.driftPriors = self.nIn
+		end
+		self.effectsCache, self.driftCache = nil, nil
+	end
 	for _, m in ipairs(k.memories or {}) do
 		local x, mask = table.create(self.nIn, 0), table.create(self.nIn, 0)
 		for sn, v in pairs(m.x) do
@@ -2415,8 +2513,8 @@ function Mind:distill(names: { string }, top: number?, conf: number?, nMem: numb
 		table.insert(out.features, { op = a.op, a = self:inputName(a.i, names), b = self:inputName(a.j, names) })
 	end
 	local function nameOf(f: number): string?
-		if f >= 2 and f <= 1 + self.nIn then
-			return names[f - 1]
+		if f >= 2 and f <= 1 + self.nXO then
+			return self:inputName(f - 1, names)
 		end
 		if f > 1 + self.nXO and f <= 1 + self.nXO + self.nOpt then
 			return self:inputName(f - 1, names)
@@ -2443,6 +2541,49 @@ function Mind:distill(names: { string }, top: number?, conf: number?, nMem: numb
 			end
 		end
 	end
+	-- the couplings: how each sense's change follows the last change. The value reads a drift copy made from
+	-- them, so a spawn without them reads zeros where the creature read its physics.
+	if self.has.C and self.Cm and self.Cm.n >= 30 then
+		out.drift = { n = self.Cm.n, W = {}, var = table.clone(self.Cm.var), err = table.clone(self.Cm.err) }
+		for r = 1, self.nIn do
+			out.drift.W[r] = table.clone(self.Cm.W[r])
+		end
+	end
+	-- the effects: what each option does to the senses. A creature's greedy choices lean on the look-ahead these
+	-- give, so a spawn born without them chooses differently on the same senses (the code creature's spawn
+	-- agreed with it on 47 decisions of 150 and scored 4 where it scored 220).
+	local function rowsOf(m)
+		local rows = {}
+		for r = 1, m.NR do
+			rows[r] = table.clone(m.W[r])
+		end
+		return { n = m.n, W = rows, var = table.clone(m.var), err = table.clone(m.err) }
+	end
+	if self.has.E and self.E then
+		out.effects = {}
+		for k, m in pairs(self.E) do
+			if m.n >= 30 then
+				out.effects[k] = rowsOf(m)
+			end
+		end
+	end
+	if self.equivariant then
+		-- the flat mind's tied laws: one per option for the self readings, one per option shared across slots
+		out.tied = { EG = {}, ES = {} }
+		for k, m in pairs(self.EG) do
+			if m.n >= 30 then
+				out.tied.EG[k] = rowsOf(m)
+			end
+		end
+		for k, m in pairs(self.ES) do
+			if m.n >= 30 then
+				out.tied.ES[k] = rowsOf(m)
+			end
+		end
+		if self.CG and self.CG.n >= 30 then
+			out.tied.CG, out.tied.CS = rowsOf(self.CG), rowsOf(self.CS)
+		end
+	end
 	local mem = table.clone(self.MEM)
 	table.sort(mem, function(a, b)
 		return a.sum / a.n > b.sum / b.n
@@ -2451,7 +2592,7 @@ function Mind:distill(names: { string }, top: number?, conf: number?, nMem: numb
 		local e = mem[q]
 		local x = {}
 		for i = 1, self.nIn do
-			x[names[i]] = e.x[i]
+			x[if self.R then "code" .. i else names[i]] = e.x[i]
 		end
 		table.insert(out.memories, { x = x, picks = table.clone(e.picks), y = e.sum / e.n })
 	end

@@ -167,7 +167,8 @@ end
 -- ------------------------------------------------------------------ the creature
 local GROUPS = Senses.groups(SLOTS, { "timeLeft", "armed" })
 local BLOCKS = if process.env.BLOCKS == "1" then GROUPS else nil
-local mind = Mind.new(#NAMES, CHOICES, { set = "OMECA", code = tonumber(process.env.CODE), calibrated = process.env.CALIB ~= "0", separable = process.env.SEP ~= "0", centredFlags = process.env.CENTRED == "1", readings = READINGS, pref = PREF, horizon = 24, step = 12, beam = 10, blocks = BLOCKS, groups = GROUPS, sparse = process.env.SPARSE == "1", equivariant = process.env.EQUIV == "1", pooledValue = process.env.POOL == "1" })
+local OPTS = { set = "OMECA", code = tonumber(process.env.CODE), calibrated = process.env.CALIB ~= "0", separable = process.env.SEP ~= "0", centredFlags = process.env.CENTRED == "1", readings = READINGS, pref = PREF, horizon = 24, step = 12, beam = 10, blocks = BLOCKS, groups = GROUPS, sparse = process.env.SPARSE == "1", equivariant = process.env.EQUIV == "1", pooledValue = process.env.POOL == "1" }
+local mind = Mind.new(#NAMES, CHOICES, OPTS)
 local coach = Coach.new(mind, { explore = 5, every = 10, floor = nil })
 -- INSTINCTS=1: born with the forage instincts (the place's Instincts.forage, in this world's names)
 if process.env.INSTINCTS == "1" then
@@ -250,9 +251,63 @@ print(("RESULT world %d: %s, last 10 episodes %.0f (greedy %.0f), %.0f us a thin
 
 -- save and reload: the creature is itself afterwards
 local saved = mind:save()
-local again = Mind.new(#NAMES, CHOICES, { set = "OMECA", code = tonumber(process.env.CODE), calibrated = process.env.CALIB ~= "0", separable = process.env.SEP ~= "0", centredFlags = process.env.CENTRED == "1", readings = READINGS, pref = PREF, horizon = 24, step = 12, beam = 10, blocks = BLOCKS, groups = GROUPS, sparse = process.env.SPARSE == "1", equivariant = process.env.EQUIV == "1", pooledValue = process.env.POOL == "1" })
+local again = Mind.new(#NAMES, CHOICES, OPTS)
 again:load(saved)
 again.exploring = false
+if process.env.DISTILL == "1" then
+	-- a spawn of the same kind: born from what the first creature distilled, not from its whole covariance
+	local loaded = again
+	local K = mind:distill(NAMES, tonumber(process.env.DISTILL_TOP), tonumber(process.env.DISTILL_CONF), tonumber(process.env.DISTILL_MEM))
+	again = Mind.new(#NAMES, CHOICES, OPTS)
+	again:learnFrom(K, NAMES)
+	again.exploring = false
+	print(("  distilled: %d priors, %d features, %d memories -> placed %d priors, %d features"):format(#K.priors, #K.features, #K.memories, again.stats.priors or 0, #again.acquired))
+	if process.env.DISTILL_DEBUG == "1" then
+		local worst, wf = 0, 0
+		for r = 1, mind.NRO do
+			for f = 1, math.min(mind.O.F, again.O.F) do
+				local d = math.abs(mind.O.W[r][f] - again.O.W[r][f])
+				if d > worst then
+					worst, wf = d, f
+				end
+			end
+		end
+		print(("  weights: F %d vs %d, largest gap %.3f at input %d (%s); bias %.2f vs %.2f"):format(mind.O.F, again.O.F, worst, wf, if wf > 1 then mind:inputName(wf - 1, NAMES) else "bias", mind.O.W[3][1], again.O.W[3][1]))
+		-- the same senses to both: do they choose alike?
+		local w = newWorld()
+		local agree, n = 0, 0
+		for _ = 1, 150 do
+			local x = senses(w)
+			local p1 = loaded:think(function()
+				return x
+			end, feasible)
+			local p2 = again:think(function()
+				return x
+			end, feasible)
+			n += 1
+			if table.concat(p1, ",") == table.concat(p2, ",") then
+				agree += 1
+			end
+			step(w, p1)
+		end
+		print(("  decisions alike on %d of %d; distilled acquired %d, loaded acquired %d, FO %d vs %d, F %d vs %d"):format(agree, n, #again.acquired, #loaded.acquired, again.FO, loaded.FO, again.O.F, loaded.O.F))
+		-- first-step values on one set of senses, both minds
+		local x = senses(w)
+		local X1, X2 = loaded:extend(loaded:encode(x)), again:extend(again:encode(x))
+		local dX = 0
+		for i = 1, #X1 do
+			dX = math.max(dX, math.abs(X1[i] - (X2[i] or 0)))
+		end
+		local dv, dv1 = 0, 0
+		for _, p in ipairs(loaded.combos) do
+			local v1 = loaded:worth(X1, p, {}, true)
+			local v2 = again:worth(X2, p, {}, true)
+			dv = math.max(dv, math.abs(v1 - v2))
+			dv1 = math.max(dv1, math.abs(v1 - again:worth(X1, p, {}, true)))
+		end
+		print(("  same senses: extended inputs differ by %.3f at most; first-step worth differs by %.3f (by %.3f on identical inputs); effect priors %s, drift priors %s"):format(dX, dv, dv1, tostring(again.stats.effectPriors), tostring(again.stats.driftPriors)))
+	end
+end
 local check = 0
 for _ = 1, 5 do
 	local w = newWorld()

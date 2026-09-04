@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.4
+
+- Distilled knowledge carries the physics: the effects models (`effects`), the couplings (`drift`) and, for
+  the flat mind, the tied laws (`tied`). A spawn born from a distilled table used to read zeros where its parent
+  read its physics, and its greedy choices lean on the look-ahead: a code creature's spawn agreed with it on 47
+  decisions of 150 and scored 4 where the parent scored 220; with the physics 92 of 150 and 176. Dense: 224
+  (parent 188), flat: 216 (parent 200). `DISTILL=1 lune run scripts/mind` checks the round trip.
+- Distill names inputs through `inputName` (code numbers, pooled fields) and names the drift and trend copies
+  (`drift:x`, `trend:x`), which `featureIndex` resolves, so every top weight lands. Under a code, `learnFrom`
+  lands what names the code, flags and their pairs directly and teaches what names senses.
+
 ## 0.6.3
 
 - `centredFlags = true` (off by default): option flags read as (picked - 1/options). Measured paired: inside

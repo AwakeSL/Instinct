@@ -89,7 +89,9 @@ effect says what an option does to a sense; a curious pair is searched first; a 
 the senses it names. Under a code (`code = 16`) the priors and pair features are *taught*: fitted as rows over
 the named senses' directions and the named options, counted `conf` times, so the creature is born believing
 the same things without an input to pin them to. `mind:distill(NAMES)` produces one of these from a creature that has lived, for a
-spawn of the same kind; `mind:save()` and `mind:load()` are the whole creature as plain data.
+spawn of the same kind, and carries the creature's physics with it (its effects and couplings: a spawn's greedy
+choices lean on the look-ahead, and without them a code creature's spawn scored 4 where the parent scored 220);
+`mind:save()` and `mind:load()` are the whole creature as plain data.
 
 ## Cost, and how it scales
 
