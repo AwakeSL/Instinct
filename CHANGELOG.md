@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.5.1
+
+- **Descriptors.** `o.descriptors[optionIndex] = { ... }` with `o.descrDim` gives options (acts, usually) a
+  graded descriptor; the value reads an option through it and through its interactions with `o.descrSenses`,
+  as well as through its private flag, and with `o.descrLearn > 0` the creature revises each descriptor on the
+  option's own rows. Measured on 8, 32 and 100 generated acts: revisable descriptors beat private flags at every
+  size and beat the greedy policy at 100; fixed descriptors are worse than revisable ones. Tag-level weights
+  are named `tagN` and `tagN*sense` in knowledge files and distilled files, and a file distilled from one act
+  set transfers to a creature with a different act set (FINDINGS 72, 73).
+- **Trends.** Every sense's change since the last decision is an input (`o.trend`, on by default); it recovers
+  what the arena's hand-written timers gave, on worlds the timers were never written for.
+- **`--!native`** on RLS.luau and Mind.luau: about 3x in Studio on settles and thinks.
+- **Sticky exploration** (`o.sticky`, 0.9): a random combination is held for a while, so a physical body
+  crosses the room instead of jittering in place.
+- The coach takes its random floor from the exploration episodes (`floor = "explore"`).
+
 ## 0.5.0
 
 The package is now the learned mind, ported from the offline prototype (`C:\lua code`, FINDINGS.md sections

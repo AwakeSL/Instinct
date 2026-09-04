@@ -1,4 +1,5 @@
 --!nonstrict
+--!native
 -- A mind made of tiers of tiny linear predictions, learned online. Ported from the offline
 -- prototype (C:\lua code\tabmind3.lua) with only what earned its place there.
 --
@@ -13,6 +14,8 @@
 --                 finds becomes a new input with a tight prior
 --   H  hazards    named events the world reports (a parry, a shot): whether each is about to
 --                 happen, from the senses, as extra inputs, plus a decaying trace of each
+--   trends        every sense's change since the last decision, as inputs (always on unless
+--                 o.trend = false); acts' descriptors, when given, as in o.descriptors
 --
 -- Every tick the creature scores every feasible combination of picks on its senses, extends the
 -- best few by their predicted next step, and takes the best. Rows settle a horizon later.
@@ -92,12 +95,41 @@ function Mind.new(nIn: number, choices: { any }, o: any)
 	self.nHaz = if self.has.H then #self.events * 3 else 0
 	self.nTrace = if self.has.H then #self.events else 0
 	self.trace = table.create(#self.events, 0)
-	self.nExtra = (if self.has.C then nIn else 0) + self.nHaz + self.nTrace
+	-- trends: every sense's change since the last decision, scaled, as inputs. No model behind them, and
+	-- worth as much on the generated worlds as the arena's hand-written timers were (FINDINGS 72).
+	self.trend = if o.trend == nil then true else o.trend
+	self.nExtra = (if self.has.C then nIn else 0) + self.nHaz + self.nTrace + (if self.trend then nIn else 0)
 	self.nX = nIn + self.nExtra
-	self.FO = 1 + self.nX + nOpt
+	-- DESCRIPTORS: o.descriptors[optionIndex] = { d1..dD } (o.descrDim = D), for the options that have
+	-- one (acts, usually). An option then enters the value through its descriptor, plus the descriptor's
+	-- interactions with the senses in o.descrSenses (default all), as well as through its own flag: options
+	-- that resemble each other share what they learn, and one never tried is valued by its resemblance.
+	-- With o.descrLearn > 0 the descriptor takes a gradient step on the option's own rows, so a tag is a
+	-- prior the creature revises, not a rule. Measured: revisable descriptors beat private flags at 8, 32
+	-- and 100 acts, and fixed ones are worse than revisable ones everywhere.
+	self.descr = o.descriptors ~= nil
+	self.descriptors = o.descriptors
+	self.descrDim = o.descrDim or 0
+	self.descrLearn = o.descrLearn or 0
+	self.descrN = {}
+	self.descrSenses = o.descrSenses
+	if self.descr and not self.descrSenses then
+		self.descrSenses = {}
+		for i = 1, nIn do
+			self.descrSenses[i] = i
+		end
+	end
+	self.nDescr = if self.descr then self.descrDim * (1 + #self.descrSenses) else 0
+	self.FO = 1 + self.nX + nOpt + self.nDescr
 	self.O = RLS.new(self.FO, self.NRO, self.ridge)
 	for i = 1 + nIn + 1, 1 + self.nX do
 		self.O.P[i][i] = 1 / self.extraRidge
+	end
+	if self.descr then
+		-- the private flags start tight when descriptors carry the load
+		for f = self.nX + 2, self.nX + 1 + nOpt do
+			self.O.P[f][f] = 1 / self.extraRidge
+		end
 	end
 	if self.has.E then
 		self.E = {}
@@ -181,6 +213,13 @@ function Mind:extend(x: { number }, out: { number }?): { number }
 			X[k] = if ld and c > 0 then c * RLS.predict(self.Cm, i, dphi) else 0
 		end
 	end
+	if self.trend then
+		local lx = self.lastThinkX
+		for i = 1, n do
+			k += 1
+			X[k] = if lx then (x[i] - lx[i]) * 5 else 0
+		end
+	end
 	if self.has.H then
 		local hphi = { 1 }
 		for i = 1, n do
@@ -216,6 +255,37 @@ function Mind:phiO(X: { number }, picks: { number }, out: { number }?): { number
 		for oo = 1, #c.options do
 			k += 1
 			phi[k] = if picks[ci] == oo then 1 else 0
+		end
+	end
+	if self.descr then
+		local D = self.descrDim
+		local acc = self.descrAcc
+		if not acc then
+			acc = table.create(D, 0)
+			self.descrAcc = acc
+		end
+		for q = 1, D do
+			acc[q] = 0
+		end
+		for ci = 1, #self.choices do
+			local d = self.descriptors[self.optIndex[ci][picks[ci]]]
+			if d then
+				for q = 1, D do
+					acc[q] += d[q]
+				end
+			end
+		end
+		for q = 1, D do
+			k += 1
+			phi[k] = acc[q]
+		end
+		local ds = self.descrSenses
+		for q = 1, D do
+			local a = acc[q]
+			for _, i in ipairs(ds) do
+				k += 1
+				phi[k] = a * X[i]
+			end
 		end
 	end
 	k = self.FO
@@ -645,6 +715,9 @@ function Mind:settle(totals: { number }, xNow: { number }, tick: number, over: b
 			for _ = 1, reps do
 				RLS.update(self.O, r.phi, y)
 			end
+			if self.descr and self.descrLearn > 0 then
+				self:descrStep(r, y)
+			end
 			S.updates += 1
 			S.kept += 1
 		else
@@ -677,8 +750,54 @@ function Mind:rebirth()
 	for q = 1, #self.acquired do
 		self.O.P[self.FO + q][self.FO + q] = 1 / self.extraRidge
 	end
+	if self.descr then
+		for f = self.nX + 2, self.nX + 1 + self.nOpt do
+			self.O.P[f][f] = 1 / self.extraRidge
+		end
+	end
 	self.pending = {}
 	self.stats.rebirths += 1
+end
+
+-- DESCRIPTOR LEARNING: value = sum_q W_q d_q + sum_{q,i} W_{q,i} d_q x_i (+ the rest), so the gradient of the
+-- preference-weighted value with respect to d_q is sum_r pref_r (W_r[q] + sum_i W_r[q,i] x_i). One step toward
+-- the row's residual for each chosen option that has a descriptor, at a rate that fades as its rows mount.
+function Mind:descrStep(r, y: { number })
+	local O, D = self.O, self.descrDim
+	local base = 1 + self.nX + self.nOpt
+	local score, predicted = 0, self:valueOf(r.phi)
+	for q = 1, self.NRO do
+		score += self.pref[q] * y[q]
+	end
+	local e = score - predicted
+	if e ~= e then
+		return
+	end
+	local ds = self.descrSenses
+	for ci = 1, #self.choices do
+		local k = self.optIndex[ci][r.picks[ci]]
+		local d = self.descriptors[k]
+		if d then
+			self.descrN[k] = (self.descrN[k] or 0) + 1
+			local rate = self.descrLearn / (1 + self.descrN[k] / 50)
+			for q = 1, D do
+				local g = 0
+				for rr = 1, self.NRO do
+					local w = self.pref[rr]
+					if w ~= 0 then
+						local W = O.W[rr]
+						local t = W[base + q]
+						local off = base + D + (q - 1) * #ds
+						for j, i in ipairs(ds) do
+							t += W[off + j] * r.X[i]
+						end
+						g += w * t
+					end
+				end
+				d[q] = math.clamp(d[q] + rate * e * g, -3, 3)
+			end
+		end
+	end
 end
 
 -- ------------------------------------------------------------------ acquisition
@@ -889,6 +1008,40 @@ function Mind:featureIndex(name: string, names: { string }): number?
 			return self.FO + q
 		end
 	end
+	if self.descr then
+		local base = 1 + self.nX + self.nOpt
+		local q = tonumber(name:match("^tag(%d+)$"))
+		if q and q >= 1 and q <= self.descrDim then
+			return base + q
+		end
+		local q2, sn = name:match("^tag(%d+)%*(.+)$")
+		if q2 then
+			q2 = tonumber(q2)
+			for j, i in ipairs(self.descrSenses) do
+				if names[i] == sn and q2 >= 1 and q2 <= self.descrDim then
+					return base + self.descrDim + (q2 - 1) * #self.descrSenses + j
+				end
+			end
+		end
+	end
+	return nil
+end
+
+-- The name of a descriptor feature ("tag5", "tag5*hostdist"), or nil if f is not one.
+function Mind:descrFeatureName(f: number, names: { string }): string?
+	if not self.descr then
+		return nil
+	end
+	local base = 1 + self.nX + self.nOpt
+	if f > base and f <= base + self.descrDim then
+		return "tag" .. (f - base)
+	end
+	local ds = self.descrSenses
+	if f > base + self.descrDim and f <= base + self.descrDim * (1 + #ds) then
+		local off = f - base - self.descrDim - 1
+		local q, j = math.floor(off / #ds) + 1, (off % #ds) + 1
+		return ("tag%d*%s"):format(q, names[ds[j]] or ("in" .. ds[j]))
+	end
 	return nil
 end
 
@@ -1006,7 +1159,7 @@ function Mind:distill(names: { string }, top: number?, conf: number?, nMem: numb
 		if f > self.FO and self.acquired[f - self.FO] then
 			return self:acquiredName(self.acquired[f - self.FO], names)
 		end
-		return nil
+		return self:descrFeatureName(f, names)
 	end
 	for r = 1, self.NRO do
 		if self.pref[r] ~= 0 then
@@ -1053,6 +1206,7 @@ function Mind:save()
 		mem = {},
 		opPrior = table.clone(self.opPrior),
 		sensePrior = table.clone(self.sensePrior),
+		descriptors = if self.descr then self.descriptors else nil,
 	}
 	for _, a in ipairs(self.acquired) do
 		table.insert(out.acquired, { op = a.op, i = a.i, j = a.j, c = a.c, forReading = a.forReading })
@@ -1095,6 +1249,13 @@ function Mind:load(saved)
 	end
 	if saved.sensePrior then
 		self.sensePrior = table.clone(saved.sensePrior)
+	end
+	if saved.descriptors and self.descr then
+		for k, d in pairs(saved.descriptors) do
+			if self.descriptors[k] then
+				self.descriptors[k] = table.clone(d)
+			end
+		end
 	end
 	if saved.E and self.has.E and not self.sharedE then
 		for k = 1, self.nOpt do

@@ -1,4 +1,5 @@
 --!strict
+--!native
 -- Recursive least squares, one shared inverse-covariance per model and any number of outputs.
 --
 -- A model is a table: F inputs (the first is the constant 1), NR outputs, W[r][i] the weights,
