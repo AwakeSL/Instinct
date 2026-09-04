@@ -5398,90 +5398,25 @@ with the row calibration on in both arms (reached, median episode, score when le
 Inside the noise for the dense mind, two seeds worse on each world for the code. The prior it changes is not
 the one that limits the newborn. Kept as an option, off.
 
-## 88. A second framework, built and scored end to end: a state-dependent factored action model (Kestrel)
+**The code with descriptors (the tags case).** tabacts PROJ=16, 100 acts, fifty tags (the descriptors then
+interact with the sixteen code numbers, 850 outcome inputs): one seed, 40 episodes, threshold never reached, last
+ten −115 against the dense mind's 134 at episode 13 (its interactions with nine senses). The code does not
+compose with a tag vocabulary as it stands; the 150-episode runs on two seeds are below.
 
-Everything above is one lineage -- a global linear outcome model over a widening feature vector, fitted by RLS
-with a covariance, plus the effects tier and a one-step projection. This section is a *different learner*
-written from scratch against the same harness and scored against the shipped one, to find out how much of the
-ledger's shape is the problem and how much is the method. It lives in `C:\lua code\kesmind.lua` and is a
-drop-in for `tabmind3` under `tabgen_k.lua` (a copy of `tabgen.lua` whose only change is
-`require(os.getenv("MIND") or "tabmind3")`, verified identical otherwise; the baseline reproduces the ledger,
-world 18 seed 1: 184).
+## 89. Every option read on the senses (Kestrel's block from the second learner)
 
-**What it is, as built.** No covariance, no effects model, no lookahead, no memories, no descriptors, no
-acquisition. The value is linear in `[1, z]` (the senses, whitened by a running mean and variance), and the
-action model is a **grouped table read on the senses**: one weight vector per (group, joint option), so an
-option's worth is `w[option] . [1, z]` rather than a scalar. Choices inside a group are indexed jointly and
-groups add; the shipped grouping is `target x move` joint, `aim` alone, `act` alone. Fitted by normalised LMS
-at mu = 0.05. Targets are the same 24-tick preference sum the outcome model uses, plus `gamma = 0.9` times the
-best worth at the state the horizon ended in. Exploration is a random combination *held* for 12 decisions,
-plus a standard normal per (group, option) redrawn once an episode and read as `sigma / sqrt(1 + n)`.
+`optionBlock = true` in the package: the picked option's flag times each self reading, one weight vector an
+option (160 inputs for the code, 370 for the dense mind), exact under the separable pass. Paired in the package
+harness with the row calibration on, four seeds before the wave was stopped (reached, median episode, score when
+learned), against the calibrated arms' eight seeds:
 
-**Held-out worlds, six seeds, 150 episodes, same harness for both** (mean of the last ten episodes; reached =
-how many of the 24 seed-worlds hit the threshold; median rows = rows-to-threshold over those that did):
-
-| arm | 18 | 20 | 24 | 28 | mean | reached | median rows |
-|---|---|---|---|---|---|---|---|
-| tabmind3 (OMECTA) | 112 | 506 | 255 | 242 | 279 | 13/24 | 12,000 |
-| tabmind3 + coach | 197 | 808 | 536 | 330 | 468 | 22/24 | 14,550 |
-| kesmind | 220 | 681 | 434 | 296 | 408 | 23/24 | 10,500 |
-| kesmind + coach | 186 | 748 | 504 | 296 | 433 | 23/24 | 10,400 |
-
-Read it as a split decision, and the split is the interesting part. On the benchmark's *primary* measure --
-rows-to-threshold, which is what 63 built these worlds to measure -- the new learner wins: 10,400 rows against
-14,550, and 23 of 24 seed-worlds learned against 22 (and against 13 for the uncoached mind). On final skill it
-loses by 7% (433 against 468). It also costs 10 us a think against 86 (world 24), with no covariance to settle.
-The coach is worth +189 to tabmind3 and only +25 here, because it almost never fires: this learner is rarely
-below random long enough to be reborn, which is the same reliability the reached column reports.
-
-**Ablation, on the training worlds 2/5/9/13 (six seeds), so the held-out four stay unspent:**
-
-| arm | mean | reached |
+| | world 2 | world 24 |
 |---|---|---|
-| full | 197 | 23/24 |
-| no bootstrap (gamma = 0) | 83 | 13/24 |
-| fully additive action model (one weight an option) | 162 | 19/24 |
-| no held draw (sigma = 0) | 177 | 19/24 |
-| no sticky hold | 188 | 20/24 |
-| plus the local part (below) | 59 | 8/24 |
+| dense, calibrated | 7/8, 14, 222 | 8/8, 11, 683 |
+| dense, calibrated, block | 4/4, 18, 183 | (not run) |
+| code 16, calibrated | 7/8, 12, 224 | 8/8, 11, 648 |
+| code 16, calibrated, block | 3/4, 18, 130 | 1/4, 26, 490 |
 
-Two of those rows are worth more than the headline.
-
-**The premise of the design was wrong, and the ledger predicted the wrong half.** It was built as a *local*
-model -- Kanerva coding: the state coded by its nearest few of a growing set of prototypes, the value a linear
-function of that code. The reasoning was that a method with no covariance cannot lose the way 49, 59, 61, 62
-and 76-78 lost, and that a local model is state-dependent by construction where the outcome model's greedy
-policy is state-blind. The first half held; the second half was answered by something much cheaper. The local
-part **loses on its own and destroys the global part when added to it** (59 against 197, 8/24 against 23/24) at
-every step size tried. Three things went wrong on the way, each measured: a fixed growth radius is meaningless
-at 38 dimensions, where every pair of states sits at nearly the same distance (8,415 prototypes grown against
-a budget of 512, all churn); replacing that with vector-quantisation drift stabilised the code and *lowered*
-the score; and even given a settled code the local corrections fit noise the global line had already
-generalised. What actually supplies state-dependence is reading the option on the senses -- 39 numbers an
-option, not a memory.
-
-**The rest of the win is delayed credit, and it is the row the ledger says should not work.** Removing the
-bootstrap costs more than everything else combined (197 -> 83). 70 measured bootstrapped discounted returns on
-tabmind3 at 0.95 and 0.97 and got 99/775/365/122, worse. Both can be true: tabmind3 has an effects tier and a
-one-step projection, so it already has a route from "approach" to "the item gets nearer", and a bootstrap adds
-a second, noisier one. This learner has no forward model at all, so the bootstrap *is* its only route, and a
-24-tick undiscounted window cannot otherwise credit a walk toward food that takes a hundred ticks. Traced
-directly: without it the creature converges on a do-nothing corner where the return is 0 +- 1.3 -- it has
-learned to avoid damage and never discovered eating.
-
-Two smaller confirmations. The `target x move` grouping is worth 197 against 162 for a fully additive action
-model, which is 22's separability note read as a *design* rather than a search trick: the worth of approaching
-depends on what is being approached, and nothing else can supply it, because the creature's current target is
-not among its senses. And the held draw is worth 197 against 177 -- a small, honest win for the shape 86
-proposed, in a learner where it is the only exploration there is past the first five episodes.
-
-**What this says for the shipped mind.** Nothing here is a drop-in: this is a parallel learner, not a change to
-tabmind3, and on final skill the shipped mind is still ahead. What it is evidence for is that the open note's
-diagnosis is right and cheaper to act on than the descriptor route -- an option read on the senses, at 39
-numbers an option, took a learner with no effects tier, no covariance and no lookahead to within 7% of the
-full mind at an eighth of the cost, and past it on learning speed.
-
-*Caveat on method, stated rather than buried:* the step size was first swept on the held-out worlds before the
-protocol was corrected. Every knob in the shipped configuration was then chosen on worlds 2/5/9/13 and the
-held-out four were run once, but they are not perfectly unspent and the 408/433 should be read with that in
-mind. The ablation table is clean.
+Slower to the threshold and worse when there, and the code loses world 24 outright. Kestrel's learner reads the
+block on whitened senses by normalised LMS; here it is hundreds more ridge-regularised inputs for the same rows,
+and the acquisition already finds the option-sense pairs that matter. Kept as an option, off.
