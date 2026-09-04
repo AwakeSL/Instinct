@@ -40,6 +40,7 @@ never tuned on (`tabgen.lua`, worlds 18 / 20 / 24 / 28), mean of the last ten ep
 | The world owns the want (preferences re-set each tick from body state) | Diet: -38.8 random -> -0.4 (0 is perfect) | 75 |
 | Deciding every 0.3 s instead of 0.1 s | held-out 142/636/193/297 vs 187/704/314/207 at a third of the cost | 79 |
 | Slot-equivariant effects with a pooled slot context (one law per option shared across slots, plus sums of each field by kind) | held-out 155/815/216/152 vs 187/704/314/207; settle 8.9 -> 2.4 ms at 318 senses; parameters fixed in the slot count | 80 |
+| Pooled outcome model (the value's slot inputs are sums over present slots of field-by-kind, from every copy, and field-by-option), ridge 30 | with equivariant effects: held-out 140/774/352/122 (mean 347 vs 353); the whole learning update flat in the senses; ridge 12 gives 305, ridge 1 collapses (the absent slots' constants were an accidental ridge) | 81 |
 
 ## Tried and dropped
 
@@ -49,6 +50,7 @@ never tuned on (`tabgen.lua`, worlds 18 / 20 / 24 / 28), mean of the last ten ep
 | Improvement bonus, revelation bonus | arena losses | 24, 34 |
 | Hazards on non-opponent events | loss | 31 |
 | Per-context option weights on the arena (general) | loss | 32 |
+| No effects tier, no one-step projection (OMCTA) | 640 vs 1,196 over three seeds, 0.5 ms a think against 1.1 | 37 |
 | Pair features from picks only, sense tags, act tags at 9 acts | losses | 37, 46 |
 | Bullet senses | loss | 38 (wave 22) |
 | Forgetting (any mode) in training | broke the covariance / loss | 37 |
@@ -105,10 +107,32 @@ never tuned on (`tabgen.lua`, worlds 18 / 20 / 24 / 28), mean of the last ten ep
   Lune; Studio native about 3x): think 155 us, settle 506 us, 661 us a tick. Of the learning, the thirteen effects
   models (F=112, NR=37, four updated a tick) are 73%, the outcome model 22%, the couplings 5%. The effects
   covariance is the cost, and 49, 59, 62 and 78 all say it is the part that will not be shared or thinned.
+- Every attempt to make the existing computation cheaper by *approximating* it has lost, without exception:
+  diagonal, shared and pooled effects covariance (49, 59, 62), block-local and sparse by slot or value (76, 77),
+  ridge 12, subsampled rows, narrowed effects inputs, gated outputs, effects for move+act only (77, 78). About
+  fifteen variants, no survivors. The covariance is doing real work and the cost is irreducible at the model's
+  current *width*. What has never been tried is making the model narrower.
+- The mind is append-only: `RLS.grow` is the only structural operation and nothing is ever evicted, so a creature
+  can only ever get slower. The sixty-sense budget is a consequence of that, not of RLS.
+- *Why* the covariance will not be shared or transported (61, 62, 78), measured rather than inferred: a covariance
+  is a **policy-conditional** object. Each option's rows come from its own region of the input space, because the
+  policy picks the option *from* the state, so a pooled covariance is not a rescaling of any one option's -- it is
+  the wrong metric for all of them. In a synthetic effects model at F=106 with the option drawn *uniformly*,
+  sharing one covariance across five option models is free (R2 0.9953 vs 0.9956 own); with the option chosen *from
+  the state*, the same sharing triples the residual error (0.9470 vs 0.9824). That one mechanism predicts four
+  separate losses -- shared effects covariance (78), pooling across creatures (62), spawning from the source's
+  covariance (61) and rebirth keeping it (62): different options, different creatures, different generations and a
+  reborn policy all visit different states. It also says what is safe: *thinning* a covariance in place is fair
+  game, *moving* one across a distribution shift is not. This is the mechanism behind the slot-equivariant note's
+  instinct to tie weights while leaving each model its own covariance. (Claude, 2026-09-04)
+- The "no survivors" bullet above is about *approximations*. The untried class is **identities** -- changes that
+  return the same numbers to the last bit and only move the clock. Learning cannot move, so they need a stopwatch,
+  not six seeds. Separable pick search is one; four more are proposed below (matvec zero-skipping, repeated rows in
+  closed form, the memory prefilter, and the drift block in the outcome model). (Claude, 2026-09-04)
 
 ### Proposed, not yet measured
 
-Three ideas that survive a read of the tables above. All must beat the held-out baseline 187/704/314/207.
+Four ideas that survive a read of the tables above. All must beat the held-out baseline 187/704/314/207.
 
 - **Slot-equivariant effects.** One law a slot-*kind*, weights tied across the slot groups `Senses.groups` already
   names, each slot read in its own relative frame. Effects outputs fall from every sense to one slot's worth plus
@@ -138,6 +162,25 @@ Three ideas that survive a read of the tables above. All must beat the held-out 
   into the subsampling 78 measured at about a quarter of the learning, so the test has to report the backlog
   alongside the score.
 
+- **A learned sense code (senses as descriptors).** 72 proved a compact learned code beats an explicit declared
+  vocabulary on the act side -- 68/5/306 against -71/-101/182 for flags at 8/32/100 acts, the margin widening with
+  the vocabulary, and the sparse fifty-tag version losing to the compact graded one, so the win was compression
+  itself. Senses today are what act flags were: one declared slot a thing, all dense, all read by every model, the
+  width set by the designer. Have the models read a learned code of B ~ 12-24 rather than the 37 senses (111
+  extended), fitted on the value residual by the gradient `Mind:descrStep` already computes -- shipped machinery
+  aimed at a second target, not new machinery. Cost becomes B squared, fixed and independent of how many senses the
+  game offers, so senses stop being a budget and become candidates: three hundred would cost what 37 costs now. On
+  the profile above, B=16 takes an effects update from about 33,400 units to about 6,400 and settle from 506 to
+  ~120 us, B=12 to ~70 us. It also gives eviction a home, which the append-only mind has never had: a fixed-size
+  basis makes features compete instead of accumulate. Composes with the slot-equivariant proposal above -- the same
+  encoder applied per slot with tied weights *is* one law a slot-kind, and a bond becomes a few learned numbers
+  carried in the slot beside the code. Risks: it puts a nonlinearity in front of a linear model, and 37, 54 and 58
+  are unkind to added machinery; the defence is that it adds coordinates, not search, and the one previous change
+  of that kind (72) won. Watch for the code and the weights chasing each other -- 37 says forgetting broke the
+  covariance -- so move the code slowly against the weights and reset only the affected rows of P on a swap.
+  Cheapest first test: a *fixed random* projection to B dims. If a random code holds most of the baseline the
+  bottleneck is viable and learning it can only improve on that; if random collapses, the idea dies for one run.
+
 ## Proposed, untested
 
 | idea | proposed by | date | note |
@@ -145,3 +188,14 @@ Three ideas that survive a read of the tables above. All must beat the held-out 
 | Low-rank (Frequent Directions) sketch of the effects covariance, rank ~32 | Claude | 2026-09-04 | deferred: slot-equivariant effects (below) removes the effects square exactly; the sketch would only be needed for the outcome model |
 | Slot-equivariant effects (proposed above under "Proposed, not yet measured") | another model; built by Claude | 2026-09-04 | KEPT with a pooled slot context: held-out 155/815/216/152 vs 187/704/314/207, settle 8,917 -> 2,370 us at 318 senses; the first cut that held its learning; without the pool 122/750/126/49; FINDINGS 80 |
 | Effects models read senses + trends, not the couplings' drift (inputs 3n -> 2n) | Claude | 2026-09-04 | crashed on a size mismatch; superseded by the equivariant effects, which read no drift either |
+| Separable pick search (the value is additive in the picks, so per-choice argmax replaces the product) | Claude | 2026-09-04 | detailed above under "Proposed, not yet measured"; exact rather than a prune, so it returns the same combination and only the clock moves; think is 155 us of a 661 us tick at 37 senses, and the attention gate (48) caps what it can be worth |
+| ^ note on the row above: the beam's *second* step is additive too | Claude | 2026-09-04 | Extending that row, not disputing it. With H off, `extend` is affine in x -- the couplings' drift does not depend on x, and `trend` is `5*(x - lastx)` -- so `value(X + sum d_k) = value(X) + sum (u . d_k)`, and the step-ahead pass separates exactly as the first pass does. Verified over every combination at the Learned shape: first-step max error **7.1e-15**, step-ahead max error **8.1e-14**. `gamma * conf * worth` is still not additive (`conf` averages over the choices), but once the per-option scalars exist, enumerating the combinations costs a few adds each instead of a dot product, so the product never needs separating. The exactness does need H off: the hazard inputs clamp and confidence-gate, which breaks affinity |
+| Deferred learning: a work queue drained to a microsecond budget instead of every update on one tick | Claude | 2026-09-04 | detailed above; defers and never discards, unlike 71, 77 and 78, which all drop rows; decays into 78's subsampling only if the queue stops draining, so any test must report the backlog beside the score |
+| A learned sense code (senses as descriptors, B ~ 12-24) | Claude | 2026-09-04 | detailed above; carries the 72 act-side result over to the senses, making cost independent of the sense count and giving the append-only mind an eviction rule; cheapest first test is a fixed random projection to B dims |
+| Repeated rows in closed form (`reps`) | Claude | 2026-09-04 | IDENTITY. k identical updates == one update with `den = 1 + k*phi'P phi`, gain `k*P phi*e/den`, `P -= k*P phi (P phi)'/den`. Verified against three literal updates: max weight error 1.1e-16, max covariance error 5.6e-17. Turns the three updates a surprising row costs into one. Settle-side, so the attention gate does not cap it |
+| Zero-skipping inside the covariance matvec | Claude | 2026-09-04 | IDENTITY, and only worth it at scale. An absent slot reads seven zeros in every copy and the one-hot flags are zero for every option not picked, so `sum_j P[i][j]*phi[j]` has provably-zero terms. Skipping a zero *term* is exact arithmetic, and is NOT 77's sparse-by-slot, which drops indices from the update and loses the cross-covariance. Measured on the matvec alone: 35 senses 0.78-1.07x (the index indirection costs more than it saves), 147 senses 5 of 20 slots 2.07x, 315 senses 6 of 44 slots **3.40x** (9,765 -> 2,876 us), 12 of 44 slots 2.17x. The downdate stays dense (`P phi` has no zeros), so a whole update gains roughly half of that. Only for the wide creature |
+| Random-projection prefilter for `nearest` | Claude | 2026-09-04 | IDENTITY. The memory scan is `#MEM * nIn` a think. Since `|proj(x) - proj(m)| <= ||x - m||`, a handful of fixed random projections skip only memories that provably cannot be inside `memRadius`, so the same memory comes back. Think-side, so the attention gate (48) caps it at about a third |
+| The couplings' drift is redundant in the *outcome* model | Claude | 2026-09-04 | IDENTITY in reach, not in prior. `drift` is a learned linear map of `lastDx`, and `trend` is already `5*(x - lastx)`, the same quantity; `span[trend, C*trend] = span[trend]`, so for a linear model C adds no reach at all -- only conditioning and a tighter prior, at +n inputs. The effects-side version above was superseded by the equivariant effects, which read no drift; the outcome model still reads it. 78's "outcome reads raw senses only" lost, but that dropped trends too, and dropping drift *while keeping* trends is untested. The span argument says the only thing at risk is the prior |
+| Centred one-hot flags | Claude | 2026-09-04 | The flags are exactly collinear with the bias: the sum of a choice's flags is 1, which is `phi[1]`, on every row. So the flag block's effective rank is `nOpt - nChoices`, P is singular in `nChoices` directions, and only the ridge holds it up. Subtracting `1/|options|` from each flag removes the singular direction while treating every option alike. Not reference coding (dropping one flag a choice), which merges one option into the bias and is exactly 67's lock-in; this keeps the symmetry. A reparametrisation, so reach cannot move -- but the prior does, which is the point |
+| Novelty-gated downdate | Claude | 2026-09-04 | APPROXIMATION, so 71/77/78's graveyard applies -- but it gates on a different quantity. Skip the covariance downdate (never the weights) when `k = phi'P phi / (1 + phi'P phi) < eps`: the row lies in a direction P has already determined, so the downdate is provably a near-no-op, with error bounded by `eps*||P phi||^2`. Distinct from error-gated learning (71), which gates on the *residual* and so throws away informative rows; this gates on the *input* and drops only rows that would barely move P. As a creature matures most rows become uninformative, so the saving grows with age |
+| Per-input standardisation before the ridge | Claude | 2026-09-04 | RLS is affine-invariant in the limit, but the *prior* is not: `1/ridge` on every diagonal entry is isotropic in raw coordinates, and the senses are not commensurate (`dist/range` in 0..1, `bearing` in -1..1, `closing/10`, flags 0/1). Dividing each input by a running standard deviation makes the ridge isotropic in a metric that means something. O(F) a row. A quality idea rather than a speed one, and the cheapest test of whether the ridge is currently mis-specified |

@@ -44,7 +44,8 @@ local function entities(w)
 	return { item = { position = w.food, velocity = w.foodV or Vector3.zero, hp = 1, extra = 1 } }
 end
 
-local function senses(w)
+local senses
+function senses(w)
 	return Senses.encode(w.me, SLOTS, entities(w), { (R.length - w.t) / R.length, 0 }, 40)
 end
 
@@ -147,10 +148,56 @@ local function refEpisode(policy)
 	return w.eaten * PREF.eaten
 end
 
+
+-- ------------------------------------------------------------------ a fixed random projection of the senses
+-- PROJ=B replaces the B senses the mind reads with B random combinations of the raw ones. Nothing in
+-- Mind changes: the creature simply lives in a narrower sense space. Tests whether a compact code can
+-- carry the learning before any effort goes into learning a good one.
+local PROJ = tonumber(process.env.PROJ) or 0
+local RAW = #NAMES
+local PMAT = nil
+if PROJ > 0 then
+	local st = 12345
+	local function rnd()
+		st = (1103515245 * st + 12345) % 2147483648
+		return st / 2147483648
+	end
+	PMAT = table.create(RAW)
+	local s = 1 / math.sqrt(PROJ)
+	for i = 1, RAW do
+		local row = table.create(PROJ)
+		for j = 1, PROJ do
+			row[j] = if rnd() < 0.5 then -s else s
+		end
+		PMAT[i] = row
+	end
+end
+local function project(x)
+	if not PMAT then
+		return x
+	end
+	local out = table.create(PROJ, 0)
+	for i = 1, RAW do
+		local v = x[i]
+		if v ~= 0 then
+			local row = PMAT[i]
+			for j = 1, PROJ do
+				out[j] += v * row[j]
+			end
+		end
+	end
+	return out
+end
+local rawSenses = senses
+senses = function(w)
+	return project(rawSenses(w))
+end
+local NIN = if PROJ > 0 then PROJ else RAW
+
 -- ------------------------------------------------------------------ the creature
-local GROUPS = Senses.groups(SLOTS, { "timeLeft", "armed" })
+local GROUPS = if PROJ > 0 then nil else Senses.groups(SLOTS, { "timeLeft", "armed" })
 local BLOCKS = if process.env.BLOCKS == "1" then GROUPS else nil
-local mind = Mind.new(#NAMES, CHOICES, { set = "OMECA", readings = READINGS, pref = PREF, horizon = 24, step = 12, beam = 10, blocks = BLOCKS, groups = GROUPS, sparse = process.env.SPARSE == "1", equivariant = process.env.EQUIV == "1" })
+local mind = Mind.new(NIN, CHOICES, { set = "OMECA", readings = READINGS, pref = PREF, horizon = 24, step = 12, beam = 10, blocks = BLOCKS, groups = GROUPS, sparse = process.env.SPARSE == "1", equivariant = process.env.EQUIV == "1" })
 local coach = Coach.new(mind, { explore = 5, every = 10, floor = nil })
 
 local function episode(learn)
@@ -215,16 +262,15 @@ print(("RESULT world %d: %s, last 10 episodes %.0f (greedy %.0f), %.0f us a thin
 	grd,
 	mind:microsecondsAThink(),
 	os.clock() - t0,
-	table.concat(mind:acquiredNames(NAMES), "  ")
+	if PROJ > 0 then "(projected)" else table.concat(mind:acquiredNames(NAMES), "  ")
 ))
 
-print(("PROFILE: think %.1f us x%d   settle %.1f us x%d   tick %.1f us"):format(
-  PROF.think*1e6/math.max(1,PROF.nthink), PROF.nthink,
-  PROF.settle*1e6/math.max(1,PROF.nsettle), PROF.nsettle,
+print(("PROFILE proj=%d: think %.1f us   settle %.1f us   tick %.1f us"):format(
+  PROJ, PROF.think*1e6/math.max(1,PROF.nthink), PROF.settle*1e6/math.max(1,PROF.nsettle),
   (PROF.think+PROF.settle)*1e6/math.max(1,PROF.nthink)))
 -- save and reload: the creature is itself afterwards
 local saved = mind:save()
-local again = Mind.new(#NAMES, CHOICES, { set = "OMECA", readings = READINGS, pref = PREF, horizon = 24, step = 12, beam = 10, blocks = BLOCKS, groups = GROUPS, sparse = process.env.SPARSE == "1", equivariant = process.env.EQUIV == "1" })
+local again = Mind.new(NIN, CHOICES, { set = "OMECA", readings = READINGS, pref = PREF, horizon = 24, step = 12, beam = 10, blocks = BLOCKS, groups = GROUPS, sparse = process.env.SPARSE == "1", equivariant = process.env.EQUIV == "1" })
 again:load(saved)
 again.exploring = false
 local check = 0

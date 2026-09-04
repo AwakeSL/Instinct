@@ -218,8 +218,10 @@ function Mind.new(nIn: number, choices: { any }, o: any)
 		self.eqKinds = math.min(#self.eqSlots, 6)
 		local nSelf, nSlot = #self.eqSelf, self.eqSlotSize
 		local copies = if self.trend then 2 else 1
-		self.eqFG = 1 + nSelf * copies
-		self.eqFS = 1 + (nSelf + nSlot) * copies + self.eqKinds
+		-- both laws also read a pooled summary of every present slot: sums of each field by kind
+		self.eqPoolN = self.eqKinds * nSlot
+		self.eqFG = 1 + nSelf * copies + self.eqPoolN
+		self.eqFS = 1 + (nSelf + nSlot) * copies + self.eqKinds + self.eqPoolN
 		self.EG, self.ES = {}, {}
 		for k = 1, nOpt do
 			self.EG[k] = RLS.new(self.eqFG, nSelf, self.ridge)
@@ -555,7 +557,21 @@ function Mind:trendOffset(): number?
 	return self.nIn + (if self.has.C then self.nIn else 0)
 end
 
-function Mind:eqPhiG(X: { number }, out: { number }?): { number }
+function Mind:eqPool(X: { number }): { number }
+	local pool = table.create(self.eqPoolN, 0)
+	local size = self.eqSlotSize
+	for g, B in ipairs(self.eqSlots) do
+		if X[B[1]] ~= 0 then
+			local base = (math.min(g, self.eqKinds) - 1) * size
+			for q, i in ipairs(B) do
+				pool[base + q] += X[i]
+			end
+		end
+	end
+	return pool
+end
+
+function Mind:eqPhiG(X: { number }, out: { number }?, pool: { number }?): { number }
 	local phi = out or {}
 	phi[1] = 1
 	local k = 1
@@ -570,10 +586,15 @@ function Mind:eqPhiG(X: { number }, out: { number }?): { number }
 			phi[k] = X[to + i]
 		end
 	end
+	pool = pool or self:eqPool(X)
+	for q = 1, self.eqPoolN do
+		k += 1
+		phi[k] = pool[q]
+	end
 	return phi
 end
 
-function Mind:eqPhiS(X: { number }, g: number, out: { number }?): { number }
+function Mind:eqPhiS(X: { number }, g: number, out: { number }?, pool: { number }?): { number }
 	local phi = out or {}
 	phi[1] = 1
 	local k = 1
@@ -602,6 +623,11 @@ function Mind:eqPhiS(X: { number }, g: number, out: { number }?): { number }
 		k += 1
 		phi[k] = if q == kind then 1 else 0
 	end
+	pool = pool or self:eqPool(X)
+	for q = 1, self.eqPoolN do
+		k += 1
+		phi[k] = pool[q]
+	end
 	return phi
 end
 
@@ -611,9 +637,14 @@ function Mind:stepAheadEquiv(X: { number }, picks: { number }, out: { number }?,
 		nxt[i] = X[i]
 	end
 	cache = cache or {}
+	local pool = cache.pool
+	if not pool then
+		pool = self:eqPool(X)
+		cache.pool = pool
+	end
 	local phiG = cache.phiG
 	if not phiG then
-		phiG = self:eqPhiG(X)
+		phiG = self:eqPhiG(X, nil, pool)
 		cache.phiG = phiG
 	end
 	local phiS = cache.phiS
@@ -621,7 +652,7 @@ function Mind:stepAheadEquiv(X: { number }, picks: { number }, out: { number }?,
 		phiS = {}
 		for g, B in ipairs(self.eqSlots) do
 			if X[B[1]] ~= 0 then
-				phiS[g] = self:eqPhiS(X, g)
+				phiS[g] = self:eqPhiS(X, g, nil, pool)
 			end
 		end
 		cache.phiS = phiS
@@ -1037,7 +1068,8 @@ function Mind:settle(totals: { number }, xNow: { number }, tick: number, over: b
 		for _, r in ipairs(self.pendingE) do
 			if (tick - r.at >= self.STEP or over) and self.equivariant then
 				local X = r.X
-				local phiG = self:eqPhiG(X)
+				local pool = self:eqPool(X)
+				local phiG = self:eqPhiG(X, nil, pool)
 				local dyG = {}
 				for q, i in ipairs(self.eqSelf) do
 					dyG[q] = xNow[i] - X[i]
@@ -1049,7 +1081,7 @@ function Mind:settle(totals: { number }, xNow: { number }, tick: number, over: b
 					local S = self.ES[k]
 					for g, B in ipairs(self.eqSlots) do
 						if X[B[1]] ~= 0 and xNow[B[1]] ~= 0 then
-							self:eqPhiS(X, g, phiS)
+							self:eqPhiS(X, g, phiS, pool)
 							for q, i in ipairs(B) do
 								dyS[q] = xNow[i] - X[i]
 							end
