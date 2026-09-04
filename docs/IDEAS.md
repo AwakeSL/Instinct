@@ -141,5 +141,6 @@ Three ideas that survive a read of the tables above. All must beat the held-out 
 
 | idea | proposed by | date | note |
 |---|---|---|---|
-| Low-rank (Frequent Directions) sketch of the effects covariance, rank ~32: update cost linear in inputs times rank, cross-terms kept approximately | Claude | 2026-09-04 | being built; see FINDINGS 80 when it exists |
-| Effects models read senses + trends, not the couplings' drift (inputs 3n -> 2n) | Claude | 2026-09-04 | running on the held-out worlds |
+| Low-rank (Frequent Directions) sketch of the effects covariance, rank ~32 | Claude | 2026-09-04 | deferred: slot-equivariant effects (below) removes the effects square exactly; the sketch would only be needed for the outcome model |
+| Slot-equivariant effects (proposed above under "Proposed, not yet measured") | another model; built by Claude | 2026-09-04 | built as EQUIV=1: settle 8,917 -> 1,990 us at 318 senses, world 2 174 vs 164; six seeds on the held-out worlds running; FINDINGS 80 |
+| Effects models read senses + trends, not the couplings' drift (inputs 3n -> 2n) | Claude | 2026-09-04 | crashed on a size mismatch; superseded by the equivariant effects, which read no drift either |
