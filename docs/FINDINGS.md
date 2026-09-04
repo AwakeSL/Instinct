@@ -5424,3 +5424,8 @@ and the acquisition already finds the option-sense pairs that matter. Kept as an
 At 150 episodes, two seeds: code seed 1 never reaches (−117), code seed 2 reaches at episode 10 and ends at
 **460** against a greedy hand policy's 136 and the dense mind's 133 / 196 (episodes 13 and 15). Split: a code
 with a tag vocabulary either fails or beats the dense mind by more than double. More seeds are running.
+
+Eight seeds of the code with fifty tags at 150 episodes (final, greedy hand policy in brackets): −117 (140),
+460 (136), 270 (255), 39 (42, threshold only at episode 144), −82 (96), 404 (163), −59 (155), 160 (207). Four of
+eight above the hand policy, three collapsed; the dense mind reached on all four of its seeds (133, 196, 309, 267).
+For a tag vocabulary the code is not reliable enough: use the dense or flat mind there.
