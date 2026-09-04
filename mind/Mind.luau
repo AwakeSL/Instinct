@@ -54,6 +54,7 @@ end
 function Mind.new(nIn: number, choices: { any }, o: any)
 	o = o or {}
 	local self = setmetatable({}, Mind)
+	local groupsGiven = o.groups -- the slot layout as given, before a code strips it
 	-- CODE (o.code = B): the senses are read through a fixed random code of B numbers, a Gaussian mix drawn
 	-- once from o.codeSeed, and every tier works on the code. Measured on the held-out worlds: sixteen random
 	-- mixes of 37 senses learn twice as well as the senses themselves and reach every seed of a world the dense
@@ -107,14 +108,18 @@ function Mind.new(nIn: number, choices: { any }, o: any)
 	local sub = o.subjects
 	if sub then
 		self.subjectDim = sub.dim or 4
-		self.subjectLearn = sub.learn or 0.05
+		-- learn = 0 (the default): an individual's numbers are its fixed random face, and what the creature holds
+		-- about it is the weight the value learns on that face. learn > 0 turns the numbers into running
+		-- statistics of what happened around the individual instead (measured worse: the value then chases
+		-- inputs that move).
+		self.subjectLearn = sub.learn or 0
 		self.subjectForget = sub.forget or 0
 		self.subjectFields = sub.fields
-		if not self.subjectFields and self.groups then
+		if not self.subjectFields and groupsGiven then
 			-- the last `dim` senses of every slot group
 			self.subjectFields = {}
-			for g = 2, #self.groups do
-				local B = self.groups[g]
+			for g = 2, #groupsGiven do
+				local B = groupsGiven[g]
 				local f = {}
 				for q = #B - self.subjectDim + 1, #B do
 					table.insert(f, B[q])
@@ -125,6 +130,7 @@ function Mind.new(nIn: number, choices: { any }, o: any)
 		self.subjectOf = {} -- id -> { numbers }
 		self.subjectSeen = {} -- id -> rows
 		self.subjectLast = {} -- id -> the think it was last seen at
+		self.subjectFace = {} -- id -> the face it was born with (what forgetting relaxes toward)
 		self.idsNow = {} -- slot -> id, as the senses were last encoded
 	end
 	-- LEARNER (o.lms = mu): every model fits by normalised LMS at that step instead of RLS. No covariance, so
@@ -1196,8 +1202,19 @@ function Mind:whoFn()
 		end
 		local d = self.subjectOf[id]
 		if not d then
+			-- a stranger gets a small random face of its own, from its id: numbers that are zero for everyone give
+			-- the value nothing to weigh and so nothing to revise (a zero input never earns a weight)
 			d = table.create(self.subjectDim, 0)
+			local h = 12345
+			for c in tostring(id):gmatch(".") do
+				h = (h * 69069 + c:byte() + 1) % 4294967296 -- small multiplier: the product stays exact in a double
+			end
+			for q = 1, self.subjectDim do
+				h = (h * 69069 + 12345) % 4294967296
+				d[q] = ((h // 65536) / 65536 - 0.5) * 0.5
+			end
 			self.subjectOf[id] = d
+			self.subjectFace[id] = table.clone(d)
 		end
 		-- forgetting: what is held about an individual relaxes toward nothing over the thinks it was not seen
 		-- for (`forget` a think), so a stranger of long ago reads like any other of its kind again
@@ -1207,8 +1224,9 @@ function Mind:whoFn()
 			local last = self.subjectLast[id]
 			if last and now > last + 1 then
 				local keep = (1 - f) ^ (now - last - 1)
+				local face = self.subjectFace[id]
 				for q = 1, self.subjectDim do
-					d[q] *= keep
+					d[q] = face[q] + (d[q] - face[q]) * keep -- toward its face, not toward zero
 				end
 			end
 			self.subjectLast[id] = now
@@ -1231,10 +1249,56 @@ function Mind:subject(id: any): { number }?
 	return self.subjectOf and self.subjectOf[id] or nil
 end
 
--- One row's worth of revision: the individuals present move along the value's gradient at the row's error.
+-- What an individual is worth to the creature, in score units: the value's read of its numbers, placed in
+-- each slot it could appear in, against the same read with nobody there (on otherwise blank senses and the
+-- first options; the same for every layout, code included). Positive: things go better when it is about.
+-- The game's "why does it hate me".
+function Mind:opinion(id: any): number
+	local d = self.subjectOf and self.subjectOf[id]
+	if not d or not self.subjectFields then
+		return 0
+	end
+	local picks = table.create(#self.choices, 1)
+	local held = self.lastThinkX
+	self.lastThinkX = nil -- no trend against a blank read
+	local blank = table.create(self.nRaw or self.nIn, 0)
+	local phi = {}
+	local total = 0
+	for slot, fields in pairs(self.subjectFields) do
+		-- somebody is in the slot for both reads (its "there" field), so a pooled value counts it
+		local there = if self.groups and self.groups[slot + 1] then self.groups[slot + 1][1] else nil
+		if there then
+			blank[there] = 1
+		end
+		local base = self:valueOf(self:phiO(self:extend(self:encode(blank)), picks, phi))
+		for q, i in ipairs(fields) do
+			blank[i] = d[q]
+		end
+		total += self:valueOf(self:phiO(self:extend(self:encode(blank)), picks, phi)) - base
+		for _, i in ipairs(fields) do
+			blank[i] = 0
+		end
+		if there then
+			blank[there] = 0
+		end
+	end
+	self.lastThinkX = held
+	return total
+end
+
+-- One row's worth of revision. What is held about an individual is what has happened around it: the row's
+-- surprise (score less what the value predicted) as a long-run mean and as a recent one, the row's score
+-- itself, and how familiar the individual is. Each is a bounded running mean, so it cannot run away, and it
+-- is the value's job to learn what those numbers are worth; a stranger starts from its random face.
 function Mind:subjectStep(r, y: { number })
 	local ids = r.ids
-	if not ids or not self.subjectFields then
+	if not ids or not self.subjectOf then
+		return
+	end
+	for _, id in pairs(ids) do
+		self.subjectSeen[id] = (self.subjectSeen[id] or 0) + 1
+	end
+	if self.subjectLearn <= 0 then
 		return
 	end
 	local score, predicted = 0, self:valueOf(r.phi)
@@ -1245,37 +1309,34 @@ function Mind:subjectStep(r, y: { number })
 	if e ~= e then
 		return
 	end
-	local raw = r.x
-	if not raw then
-		return
-	end
-	local phi = self.subjectPhi or {}
-	self.subjectPhi = phi
-	local eps = 1e-3
-	for slot, id in pairs(ids) do
-		local fields = self.subjectFields[slot]
+	-- the scales the numbers are read against: running sizes of the surprise and of the score
+	self.subjectEScale = 0.99 * (self.subjectEScale or 1) + 0.01 * math.abs(e)
+	self.subjectSScale = 0.99 * (self.subjectSScale or 1) + 0.01 * math.abs(score)
+	local eN = math.clamp(e / (2 * math.max(self.subjectEScale, 1e-6)), -1, 1)
+	local sN = math.clamp(score / (2 * math.max(self.subjectSScale, 1e-6)), -1, 1)
+	local D = self.subjectDim
+	for _, id in pairs(ids) do
 		local d = self.subjectOf[id]
-		if fields and d then
-			-- the value's slope along each who-field, by a small step through the whole read
-			local grad = {}
-			for q, i in ipairs(fields) do
-				local was = raw[i]
-				raw[i] = was + eps
-				local X = self:extend(self:encode(raw))
-				self:phiO(X, r.picks, phi)
-				grad[q] = (self:valueOf(phi) - predicted) / eps
-				raw[i] = was
-			end
+		if d then
 			local n = (self.subjectSeen[id] or 0) + 1
 			self.subjectSeen[id] = n
-			local rate = self.subjectLearn / (1 + n / 200)
-			for q = 1, self.subjectDim do
-				d[q] = math.clamp(d[q] + rate * e * grad[q], -1, 1)
+			local slow = 1 / math.min(n, 300)
+			d[1] += slow * (eN - d[1]) -- surprise around them, long run
+			if D >= 2 then
+				d[2] += 0.05 * (eN - d[2]) -- surprise around them, lately
+			end
+			if D >= 3 then
+				d[3] += slow * (sN - d[3]) -- how things score when they are about
+			end
+			if D >= 4 then
+				d[4] = 1 - 1 / (1 + n / 100) -- familiarity
+			end
+			for q = 5, D do
+				d[q] += slow * (eN * (if q % 2 == 1 then 1 else -1) - d[q])
 			end
 			self.stats.subjectSteps = (self.stats.subjectSteps or 0) + 1
 		end
 	end
-	self.lastThinkX = self.lastThinkX -- (the extend above does not touch it)
 end
 
 -- ------------------------------------------------------------------ separable pick search
@@ -2283,7 +2344,28 @@ end
 -- ------------------------------------------------------------------ names
 
 -- The index in phi of a named input: a sense, "choice=option", or an acquired "op(a,b)".
-function Mind:featureIndex(name: string, names: { string }): number?
+function Mind:featureIndex(name: string?, names: { string }?, senseIndex: number?): number?
+	if senseIndex then
+		-- the phi position of raw sense i: dense i + 1; pooled, the raw copy of its field by kind; a code, nil
+		if self.R then
+			return nil
+		elseif not self.pooledValue then
+			return senseIndex + 1
+		end
+		local q = table.find(self.poolSelf, senseIndex)
+		if q then
+			return q + 1
+		end
+		for g, B in ipairs(self.poolSlots) do
+			local f = table.find(B, senseIndex)
+			if f then
+				local kind = math.min(g, self.poolKinds) - 1
+				return 1 + self.nXO + self.nOpt + kind * #self.poolCopies * self.poolSize + f
+			end
+		end
+		return nil
+	end
+	assert(name and names, "featureIndex needs a name")
 	if not self.pooledValue then
 		local kind, base = name:match("^(%a+):(.+)$")
 		if kind == "drift" and self.has.C then
@@ -2835,7 +2917,7 @@ end
 -- reloaded from this is itself, a little less sure of its couplings.
 function Mind:save()
 	local out = {
-		subjects = if self.subjectOf then { of = self.subjectOf, seen = self.subjectSeen, last = self.subjectLast } else nil,
+		subjects = if self.subjectOf then { of = self.subjectOf, seen = self.subjectSeen, last = self.subjectLast, face = self.subjectFace } else nil,
 		nIn = self.nIn,
 		nRaw = self.nRaw,
 		codeSeed = self.codeSeed,
@@ -2902,7 +2984,7 @@ function Mind:load(saved)
 	end
 	self.MEM, self.FLAT = {}, {}
 	if saved.subjects and self.subjectOf then
-		self.subjectOf, self.subjectSeen, self.subjectLast = saved.subjects.of, saved.subjects.seen or {}, saved.subjects.last or {}
+		self.subjectOf, self.subjectSeen, self.subjectLast, self.subjectFace = saved.subjects.of, saved.subjects.seen or {}, saved.subjects.last or {}, saved.subjects.face or {}
 	end
 	for _, e in ipairs(saved.mem or {}) do
 		storeMemory(self, e.x, e.picks, e.y, e.mask)

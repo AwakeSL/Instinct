@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.2
+
+- Memory of individuals, as it now works: every individual's numbers are a fixed random face and the outcome
+  model learns what each face is worth (`subjects = { dim = 4 }`; `learn > 0` turns the numbers into running
+  statistics instead, measured worse). `mind:opinion(id)` reads what an individual is worth in score units.
+  Measured on the people world, eight seeds: the code mind with faces learns who is who on every seed and
+  beats the hand policy by forty percent; the dense mind with faces is bimodal (FINDINGS 92, rewritten).
+  Recommended: `code = 16` with `subjects`.
+
 ## 0.7.1
 
 - Fix: `think` cleared the slot identities before reading them, so a game that encodes the senses once

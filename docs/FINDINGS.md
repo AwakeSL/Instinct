@@ -5623,31 +5623,39 @@ so the file is probably mid-change. Until the version that produced 88 is restor
 been measured on a learner that is not the one in the table, and the comparison says nothing about way 2. The
 patch (`patch_kforesee.py` in the scratchpad, kesmind_f.lua) is ready to re-run in a minute once it is.
 
-## 92. Memory of individuals: subject descriptors
+## 92. Memory of individuals: faces
 
 Two things of one kind read the same through the senses, so a creature could never treat them differently:
-"the nearest host" was all it could know. Now every named thing carries `dim` learned numbers in its slot
-(`Senses.layout(slots, world, dim)` adds `<slot>who1..dim`; `Senses.encode` fills them through the mind's
-`whoFn`), read by every model as ordinary senses, and each row the individual was present for moves its
-numbers along the value's gradient at the row's error (`subjectStep`, a finite difference through the whole
-read, so it is right for the dense, pooled and code layouts and through acquired features). Forgetting relaxes
-the numbers toward nothing over the thinks an individual was not seen for. Saves carry them.
+"the nearest host" was all it could know. Now every named thing carries `dim` numbers in its slot
+(`Senses.layout(slots, world, dim)` adds `<slot>who1..dim`; `Senses.encode(..., mind:whoFn(), dim)` fills
+them), read by every model as ordinary senses. The world that needs it (`WORLD=3`, people): three individuals
+of one kind wander; reaching A is a meal, reaching B a wound, C nothing; nothing in their senses tells them
+apart. Eight seeds, 30 episodes, the last ten's mean against a hand policy that approaches A only when A is
+nearest (about 104). What the numbers *are* took three tries:
 
-The world that needs it (`WORLD=3`, people): three individuals of one kind wander; reaching A is a meal,
-reaching B a wound, C nothing. Nothing in their senses tells them apart. Eight seeds, 30 episodes, the last
-ten's mean against a hand policy that approaches A only when A is nearest (about 104):
+1. **Numbers moved along the value's gradient at each row's error** (the act-descriptor rule): they never
+   move. A number that is zero for everyone earns no weight in RLS (a zero input never changes its row of
+   the covariance), so its gradient is zero. Started from random faces instead, the loop feeds on its own
+   weights and every number saturates at +-1 with A and B alike.
+2. **Running statistics of what happened around the individual** (surprise, score, familiarity): the value
+   chases inputs that move, and learning collapses (16-56 on four seeds where the plain mind reaches 99).
+3. **A fixed random face per individual, and nothing else**: the outcome model learns what each face is
+   worth. Stable, and exact for a handful of individuals (faces of 4 separate up to four of them).
 
-| | reached | median episode | median final | finals |
-|---|---|---|---|---|
-| dense, no memory | 6/8 | 11.5 | 99 | 43 61 100 145 169 134 61 98 |
-| dense, memory of 4 | 8/8 | 11 | 149 | 229 102 70 187 126 172 89 181 |
-| dense, memory of 2 | 4/8 | 16.5 | 63 | 40 86 138 34 129 30 161 11 |
-| code 16, memory of 4 | 6/8 | 13 | 151 | 171 16 150 163 41 153 157 128 |
-| flat, memory of 4 | 7/8 | 18 | 128 | 67 150 163 167 64 61 117 139 |
-| world 2, dense, memory of 4 (regression) | 6/8 | 11.5 | 222 | against 7/8, 12, 224 without |
+| | reached | median episode | median final | finals | opinions held (medians) |
+|---|---|---|---|---|---|
+| dense, no memory | 6/8 | 11.5 | 99 | 43 61 100 145 169 134 61 98 | |
+| dense, faces of 4 | 4/8 | 10 | 86 | 125 188 146 22 18 56 35 116 | A +8.2, B -3.8, C -2.8 |
+| dense, faces of 8 | 5/8 | 11 | 88 | 150 165 165 15 81 94 8 22 | A +7.2, B -5.0, C -4.3 |
+| **code 16, faces of 4** | **8/8** | 11.5 | **143** | 126 137 132 150 148 149 166 127 | A +25, B -10, C -12 |
+| flat, faces of 4 | 7/8 | 12 | 112 | 128 95 151 25 87 67 147 178 | |
 
-A creature without the memory approaches everyone and nets what the odds give it, about the hand policy's
-score. With four numbers a person it learns who is who and beats the hand policy by half, on every seed;
-a reloaded creature keeps its opinions (140 on five check episodes). Two numbers are not enough. The code and
-the flat mind take it too. Cost: four senses a slot. Shipped as 0.7.0 with a Studio trial (People: three
-look-alike strangers with their held numbers on their labels).
+The opinions come out right in every layout (A the meal is worth +8 to +25, B the wound and C the nothing
+are worth less than nobody), but only the code turns them into a reliable policy: eight seeds of eight, forty
+percent above the hand policy, every final within 126-166. The dense mind with faces is bimodal, half its
+seeds collapsing to 18-56, which the plain dense mind does not do; the flat mind sits between. The code
+mixes a face into all sixteen of its numbers, which is presumably why it takes to it. `mind:opinion(id)` is
+the readout: the value's read of the face in the slot against the same read with nobody there, in score
+units. Recommended: `code = 16` with `subjects = { dim = 4 }`. Studio trial People (three look-alike
+strangers, their opinions on their labels). Forgetting relaxes numbers toward the face over the thinks an
+individual goes unseen, which with fixed faces is a no-op until numbers are learned again.

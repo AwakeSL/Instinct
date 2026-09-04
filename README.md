@@ -96,10 +96,11 @@ choices lean on the look-ahead, and without them a code creature's spawn scored 
 ## Memory of individuals
 
 Two things of one kind read the same through the senses. With `subjects = { dim = 4 }` every named thing the
-creature senses (an entity carrying an `id`) gets four learned numbers of its own, carried in its slot as
-`<slot>who1..4` senses and revised from the creature's own rows: an individual comes to mean what it has
-preceded, a meal or a wound. `mind:subject(id)` is what it holds about one of them, the game's "why does it
-hate me". Lay the senses out with `Senses.layout(SLOTS, WORLD, 4)` and encode with `Senses.encode(me, SLOTS,
+creature senses (an entity carrying an `id`) gets a fixed random face of four numbers, carried in its slot as
+`<slot>who1..4` senses; the outcome model learns what each face is worth, so an individual comes to mean what it
+has preceded, a meal or a wound. `mind:opinion(id)` is what one of them is worth to it in score units, the
+game's "why does it hate me". Use it with `code = 16`: that is the layout that turned the opinions into a
+reliable policy on every seed. Lay the senses out with `Senses.layout(SLOTS, WORLD, 4)` and encode with `Senses.encode(me, SLOTS,
 entities, world, range, mind:whoFn(), 4)`. Measured on a world of three look-alike strangers (FINDINGS 92): it
 learns who feeds it and who hurts it on every seed, where without the memory it approaches everyone.
 
