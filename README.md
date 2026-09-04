@@ -88,6 +88,25 @@ effect says what an option does to a sense; a curious pair is searched first; a 
 the senses it names. `mind:distill(NAMES)` produces one of these from a creature that has lived, for a
 spawn of the same kind; `mind:save()` and `mind:load()` are the whole creature as plain data.
 
+## Cost, and how it scales
+
+A think is cheap and grows linearly with the senses and the options (the effects are cached per think). A settle
+(learning) is the cost, and with the full update it grows with the square of the sense count: in the prototype
+about 0.25 ms a decision at 38 senses, 2.3 ms at 150, 8.5 ms at 318 (Studio with `--!native` is about three
+times slower than LuaJIT). Three linear-cost variants exist, and every one was measured to cost about a quarter
+of the learning on held-out worlds (FINDINGS 76-77):
+
+- `blocks = Senses.groups(...)` -- effects and couplings are learned within a slot's own group and the self;
+  `localOutcome = true` makes the outcome model block-local too (dearer in learning).
+- `sparse = true` with `groups = Senses.groups(...)` -- an absent slot is skipped in every update. Sound only for
+  slots that never return; a slot that comes and goes needs the reset (`sparseReset = true`, which zeroes a
+  returning slot's cross-covariance).
+
+The guidance that follows from the measurements: keep the full update below about sixty senses a creature, decide
+at ten decisions a second (`thinkEvery = 0.1`) only for creatures that are fighting, and give a slot to what a
+creature needs to react to rather than to everything it could sense. Above sixty senses, pick which quarter to
+give up.
+
 ## Checking it
 
 ```

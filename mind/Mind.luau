@@ -63,7 +63,7 @@ function Mind.new(nIn: number, choices: { any }, o: any)
 	self.nIn, self.choices = nIn, choices
 	self.H = o.horizon or 24 -- ticks a row waits before it is judged
 	self.STEP = o.step or 12 -- ticks between an effects row and its answer
-	self.ridge = o.ridge or 1
+	self.ridge = o.ridge or (if o.sparse == true then 4 else 1)
 	self.extraRidge = o.extraRidge or 20 -- the tight prior of couplings, hazards and acquired inputs
 	self.readings = o.readings or { "dealt", "taken" }
 	self.NRO = #self.readings
@@ -127,6 +127,74 @@ function Mind.new(nIn: number, choices: { any }, o: any)
 	for i = 1 + nIn + 1, 1 + self.nX do
 		self.O.P[i][i] = 1 / self.extraRidge
 	end
+	-- SPARSE (o.sparse = true, with o.groups from Senses.groups): a slot whose "there" reading is 0 is skipped
+	-- in every covariance update, with all its numbers and copies. Linear cost in the absent slots, but sound
+	-- only for slots that never return: a returning slot's stale cross-covariance wrecks its weights (FINDINGS
+	-- 77). Use it for slots that are absent for good, not for things that come and go.
+	self.groups = o.groups or o.blocks
+	-- off unless asked: skipping an absent slot is sound only for slots that never come back (FINDINGS 77)
+	self.sparse = o.sparse == true and self.groups ~= nil
+	self.sparseReset = o.sparseReset == true -- a slot back from absence forgets its cross-covariance
+	-- BLOCK-LOCAL (o.blocks: index groups over the raw senses, the first being the self group): covariance is
+	-- kept within a group only, and effects and couplings predict a group's senses from that group and the
+	-- self. Learning cost becomes linear in the senses instead of their square, which is what makes a creature
+	-- with hundreds of senses affordable. Senses.groups builds the groups for a slot layout.
+	self.blocks = o.blocks
+	-- o.localOutcome = true also makes the outcome model's covariance block-local (flags and descriptors kept
+	-- in the self group's block); by default only the effects and couplings are local, which is most of the cost
+	self.localOutcome = o.localOutcome == true
+	if self.blocks then
+		local groupOf = {}
+		for g, B in ipairs(self.blocks) do
+			for _, i in ipairs(B) do
+				groupOf[i] = g
+			end
+		end
+		self.groupOf = groupOf
+	end
+	if self.blocks and self.localOutcome then
+		local ob = {}
+		local function addCopy(offset: number)
+			for g, B in ipairs(self.blocks) do
+				local blk = {}
+				if offset == 1 and g == 1 then
+					blk[1] = 1
+				end
+				for _, i in ipairs(B) do
+					table.insert(blk, offset + i)
+				end
+				table.insert(ob, blk)
+			end
+		end
+		addCopy(1)
+		local off = 1 + nIn
+		if self.has.C then
+			addCopy(off)
+			off += nIn
+		end
+		if self.trend then
+			addCopy(off)
+			off += nIn
+		end
+		if self.has.H then
+			local blk = {}
+			for i = off + 1, off + self.nHaz + self.nTrace do
+				table.insert(blk, i)
+			end
+			if #blk > 0 then
+				table.insert(ob, blk)
+			end
+			off += self.nHaz + self.nTrace
+		end
+		assert(off == self.nX + 1, "[instinct] blocks: extras out of order")
+		-- the option flags and descriptors share the self group's block: a flag cut off from the bias cannot be
+		-- told apart from it, which is the lock-in of FINDINGS 67 built in
+		for i = self.nX + 2, self.FO do
+			table.insert(ob[1], i)
+		end
+		table.insert(ob, {}) -- the acquired inputs, appended as they come
+		self.O.blocks = ob
+	end
 	if self.descr then
 		-- the private flags start tight when descriptors carry the load
 		for f = self.nX + 2, self.nX + 1 + nOpt do
@@ -137,6 +205,9 @@ function Mind.new(nIn: number, choices: { any }, o: any)
 		self.E = {}
 		for k = 1, nOpt do
 			self.E[k] = RLS.new(1 + self.nX, nIn, self.ridge)
+			if self.blocks then
+				self:localise(self.E[k], self.nX)
+			end
 		end
 	end
 	if self.has.H then
@@ -145,6 +216,9 @@ function Mind.new(nIn: number, choices: { any }, o: any)
 	end
 	if self.has.C then
 		self.Cm = RLS.new(1 + nIn, nIn, self.ridge)
+		if self.blocks then
+			self:localise(self.Cm, nIn)
+		end
 		self.lastX, self.lastDx = nil, nil
 	end
 	-- acquisition
@@ -194,6 +268,109 @@ end
 
 -- ------------------------------------------------------------------ inputs
 
+-- Which inputs of a model belong to a slot absent in raw senses x (its "there" reading, the group's first sense,
+-- is 0). `copies` are the offsets at which the senses repeat in the model's inputs (1 for the senses, 1 + nIn for
+-- the couplings' drift, and so on). Only slot groups can be absent; the first group is the self and never is.
+function Mind:markAbsent(m, x: { number }, copies: { number })
+	if not self.sparse then
+		return
+	end
+	local absent = m.absent
+	if not absent then
+		absent = table.create(m.F, false)
+		m.absent = absent
+	end
+	for i = 1, m.F do
+		absent[i] = false
+	end
+	local was = m.wasAbsent
+	if not was then
+		was = {}
+		m.wasAbsent = was
+	end
+	for g = 2, #self.groups do
+		local B = self.groups[g]
+		local gone = x[B[1]] == 0
+		if gone then
+			for _, off in ipairs(copies) do
+				for _, i in ipairs(B) do
+					absent[off + i] = true
+				end
+			end
+		elseif was[g] and self.sparseReset then
+			local P = m.P
+			for _, off in ipairs(copies) do
+				for _, i in ipairs(B) do
+					local idx = off + i
+					if idx <= m.F then
+						local Pi = P[idx]
+						local d = Pi[idx]
+						for j = 1, m.F do
+							Pi[j] = 0
+							P[j][idx] = 0
+						end
+						Pi[idx] = d
+					end
+				end
+			end
+		end
+		was[g] = gone
+	end
+end
+
+-- the offsets at which the raw senses repeat in the outcome and effects inputs
+function Mind:senseCopies(): { number }
+	local copies = { 1 }
+	local off = 1 + self.nIn
+	if self.has.C then
+		table.insert(copies, off)
+		off += self.nIn
+	end
+	if self.trend then
+		table.insert(copies, off)
+		off += self.nIn
+	end
+	return copies
+end
+
+-- A model whose inputs are 1 followed by copies of the senses (nInputs of them) and whose outputs are the
+-- senses: covariance within each copy of each group, and each output reads only its own group and the self
+-- group, in every copy.
+function Mind:localise(m, nInputs: number)
+	local nIn, groups = self.nIn, self.blocks
+	local copies = math.floor(nInputs / nIn)
+	local blocks = {}
+	for c = 0, copies - 1 do
+		for g, B in ipairs(groups) do
+			local blk = {}
+			if c == 0 and g == 1 then
+				blk[1] = 1
+			end
+			for _, i in ipairs(B) do
+				table.insert(blk, 1 + c * nIn + i)
+			end
+			table.insert(blocks, blk)
+		end
+	end
+	m.blocks = blocks
+	m.ins = {}
+	for r = 1, m.NR do
+		local g = self.groupOf[r] or 1
+		local I = { 1 }
+		for c = 0, copies - 1 do
+			for _, i in ipairs(groups[1]) do
+				table.insert(I, 1 + c * nIn + i)
+			end
+			if g ~= 1 then
+				for _, i in ipairs(groups[g]) do
+					table.insert(I, 1 + c * nIn + i)
+				end
+			end
+		end
+		m.ins[r] = I
+	end
+end
+
 -- The senses as the models see them: the raw senses, then the couplings' predicted drift, then
 -- the hazards and their traces.
 function Mind:extend(x: { number }, out: { number }?): { number }
@@ -204,15 +381,29 @@ function Mind:extend(x: { number }, out: { number }?): { number }
 	end
 	local k = n
 	if self.has.C then
-		local dphi = { 1 }
-		local ld = self.lastDx
-		for i = 1, n do
-			dphi[i + 1] = if ld then ld[i] else 0
+		-- the couplings' predicted drift depends only on the last change, so it is the same for every
+		-- extension within a think (and every candidate in the beam): computed once per settle
+		local drift = self.driftCache
+		if drift == nil then
+			drift = table.create(n, 0)
+			local ld = self.lastDx
+			if ld then
+				local dphi = { 1 }
+				for i = 1, n do
+					dphi[i + 1] = ld[i]
+				end
+				for i = 1, n do
+					local c = RLS.confidence(self.Cm, i)
+					if c > 0 then
+						drift[i] = c * RLS.predict(self.Cm, i, dphi)
+					end
+				end
+			end
+			self.driftCache = drift
 		end
 		for i = 1, n do
 			k += 1
-			local c = RLS.confidence(self.Cm, i)
-			X[k] = if ld and c > 0 then c * RLS.predict(self.Cm, i, dphi) else 0
+			X[k] = drift[i]
 		end
 	end
 	if self.trend then
@@ -693,9 +884,11 @@ function Mind:settle(totals: { number }, xNow: { number }, tick: number, over: b
 				for i = 1, self.nIn do
 					dphi[i + 1] = self.lastDx[i]
 				end
+				self:markAbsent(self.Cm, xNow, { 1 })
 				RLS.update(self.Cm, dphi, dx)
 			end
 			self.lastDx = dx
+			self.driftCache = nil
 		end
 		self.lastX = xNow
 	end
@@ -709,8 +902,13 @@ function Mind:settle(totals: { number }, xNow: { number }, tick: number, over: b
 				for i = 1, self.nIn do
 					dy[i] = xNow[i] - r.X[i]
 				end
+				local copies = if self.sparse then self:senseCopies() else nil
 				for ci = 1, #self.choices do
-					RLS.update(self.E[self.optIndex[ci][r.picks[ci]]], phi, dy)
+					local m = self.E[self.optIndex[ci][r.picks[ci]]]
+					if copies then
+						self:markAbsent(m, r.X, copies)
+					end
+					RLS.update(m, phi, dy)
 				end
 			else
 				table.insert(keep, r)
@@ -787,6 +985,9 @@ function Mind:settle(totals: { number }, xNow: { number }, tick: number, over: b
 					self:phiO(r.X, r.picks, r.phi)
 				end
 			end
+			if self.sparse then
+				self:markAbsent(self.O, r.x, self:senseCopies())
+			end
 			for _ = 1, reps do
 				RLS.update(self.O, r.phi, y)
 			end
@@ -818,7 +1019,9 @@ end
 -- false in its first moments needs is not more rows but a fresh start; the coach decides when.
 function Mind:rebirth()
 	local F, NR = self.O.F, self.O.NR
+	local blocks = self.O.blocks
 	self.O = RLS.new(F, NR, self.ridge)
+	self.O.blocks = blocks
 	for i = 1 + self.nIn + 1, 1 + self.nX do
 		self.O.P[i][i] = 1 / self.extraRidge
 	end
@@ -1312,7 +1515,17 @@ function Mind:load(saved)
 	for _, a in ipairs(saved.acquired or {}) do
 		table.insert(self.acquired, { op = a.op, i = a.i, j = a.j, c = a.c, forReading = a.forReading })
 	end
+	local blocks = self.O.blocks
 	self.O = RLS.load(saved.O, self.ridge)
+	if blocks then
+		-- the acquired inputs' block must cover whatever was loaded
+		local last = blocks[#blocks]
+		table.clear(last)
+		for q = 1, #self.acquired do
+			table.insert(last, self.FO + q)
+		end
+		self.O.blocks = blocks
+	end
 	self.MEM, self.FLAT = {}, {}
 	for _, e in ipairs(saved.mem or {}) do
 		storeMemory(self, e.x, e.picks, e.y, e.mask)

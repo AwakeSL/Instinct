@@ -63,9 +63,8 @@ end
 
 local function slot(x: { number }, me: Self, e: Entity?, range: number)
 	if e == nil then
-		table.insert(x, 0)
-		table.insert(x, 2) -- "far": twice the range
-		for _ = 1, 5 do
+		-- an empty slot reads all zeros: "there" already says absent, and a zero row costs nothing to learn from
+		for _ = 1, 7 do
 			table.insert(x, 0)
 		end
 		return
@@ -104,6 +103,25 @@ function Senses.encode(me: Self, slots: { string }, entities: { [string]: Entity
 		slot(x, me, entities[sl], range or 40)
 	end
 	return x
+end
+
+-- The sense groups of a layout, for a block-local mind: the self and world readings first, then each slot.
+function Senses.groups(slots: { string }, worldReadings: { string }?): { { number } }
+	local groups = {}
+	local first = {}
+	local nSelf = #SELF_FIELDS + #(worldReadings or {})
+	for i = 1, nSelf do
+		table.insert(first, i)
+	end
+	table.insert(groups, first)
+	for k = 1, #slots do
+		local blk = {}
+		for q = 1, #SLOT_FIELDS do
+			table.insert(blk, nSelf + (k - 1) * #SLOT_FIELDS + q)
+		end
+		table.insert(groups, blk)
+	end
+	return groups
 end
 
 -- The bearing to an entity, in the creature's frame, for realising a move.

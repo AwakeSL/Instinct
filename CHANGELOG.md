@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.3
+
+- **Linear-cost learning, as options.** `blocks` (effects and couplings local to a slot's group and the self,
+  `localOutcome` for the outcome model too) and `sparse` with `groups` (absent slots skipped; `sparseReset`
+  for slots that come and go). Each costs about a quarter of the learning on held-out worlds; the full update
+  stays the default. `Senses.groups` builds the groups for a slot layout. A README section gives the measured
+  costs and the sense budget that follows.
+- `ridge` is an option on the mind.
+
 ## 0.5.2
 
 - **A nudge.** Ten decisions in a row with unchanged senses (a body against a wall) and the creature tries one

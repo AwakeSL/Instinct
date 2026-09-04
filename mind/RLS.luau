@@ -17,6 +17,15 @@ export type Model = {
 	err: { number },
 	var: { number },
 	mean: { number },
+	-- block-local: index lists partitioning 1..F, the covariance kept within a block only; and per output,
+	-- the inputs it reads. Cost per row becomes the sum of block sizes squared plus the outputs' input counts.
+	blocks: { { number } }?,
+	ins: { { number } }?,
+	-- absent: per input, true when it belongs to a slot that is absent this row (set by the mind before each
+	-- update). Absent inputs are skipped: their weights do not move and their cross-covariance with what is
+	-- present is not updated. Full covariance among what is present together, at the cost of its square.
+	-- Note this is by slot, never by value: a flag that reads zero is a value, and skipping it breaks learning.
+	absent: { boolean }?,
 }
 
 function RLS.new(F: number, NR: number, ridge: number): Model
@@ -56,8 +65,128 @@ function RLS.confidence(m: Model, r: number): number
 	return if c > 0 then c else 0
 end
 
+local function updateBlocks(m: Model, phi: { number }, y: { number })
+	local P, blocks = m.P, m.blocks :: { { number } }
+	local Pphi = table.create(m.F, 0)
+	local denom = 1
+	for _, B in blocks do
+		for _, i in B do
+			local s = 0
+			local Pi = P[i]
+			for _, j in B do
+				s += Pi[j] * phi[j]
+			end
+			Pphi[i] = s
+			denom += phi[i] * s
+		end
+	end
+	if not (denom > 1e-9) then
+		return
+	end
+	local ins = m.ins
+	for r = 1, m.NR do
+		local w = m.W[r]
+		local target = y[r]
+		if target ~= target then
+			continue
+		end
+		local e = target
+		local I = if ins then ins[r] else nil
+		if I then
+			for _, i in I do
+				e -= w[i] * phi[i]
+			end
+		else
+			for i = 1, m.F do
+				e -= w[i] * phi[i]
+			end
+		end
+		m.mean[r] = 0.99 * m.mean[r] + 0.01 * target
+		m.err[r] = 0.99 * m.err[r] + 0.01 * e * e
+		m.var[r] = 0.99 * m.var[r] + 0.01 * (target - m.mean[r]) ^ 2
+		local g = e / denom
+		if I then
+			for _, i in I do
+				w[i] += Pphi[i] * g
+			end
+		else
+			for i = 1, m.F do
+				w[i] += Pphi[i] * g
+			end
+		end
+	end
+	for _, B in blocks do
+		for _, i in B do
+			local Pi = P[i]
+			local ki = Pphi[i] / denom
+			for _, j in B do
+				Pi[j] -= ki * Pphi[j]
+			end
+		end
+	end
+	m.n += 1
+end
+
+local function updateSparse(m: Model, phi: { number }, y: { number }, absent: { boolean })
+	local F, P = m.F, m.P
+	local act = {}
+	for i = 1, F do
+		if not absent[i] then
+			table.insert(act, i)
+		end
+	end
+	local Pphi = table.create(F, 0)
+	local denom = 1
+	for _, i in act do
+		local s = 0
+		local Pi = P[i]
+		for _, j in act do
+			s += Pi[j] * phi[j]
+		end
+		Pphi[i] = s
+		denom += phi[i] * s
+	end
+	if not (denom > 1e-9) then
+		return
+	end
+	for r = 1, m.NR do
+		local w = m.W[r]
+		local target = y[r]
+		if target ~= target then
+			continue
+		end
+		local e = target
+		for _, i in act do
+			e -= w[i] * phi[i]
+		end
+		m.mean[r] = 0.99 * m.mean[r] + 0.01 * target
+		m.err[r] = 0.99 * m.err[r] + 0.01 * e * e
+		m.var[r] = 0.99 * m.var[r] + 0.01 * (target - m.mean[r]) ^ 2
+		local g = e / denom
+		for _, i in act do
+			w[i] += Pphi[i] * g
+		end
+	end
+	for _, i in act do
+		local Pi = P[i]
+		local ki = Pphi[i] / denom
+		for _, j in act do
+			Pi[j] -= ki * Pphi[j]
+		end
+	end
+	m.n += 1
+end
+
 -- One row: inputs phi, outputs y. Every output shares the gain, so the covariance is updated once.
 function RLS.update(m: Model, phi: { number }, y: { number })
+	if m.blocks then
+		updateBlocks(m, phi, y)
+		return
+	end
+	if m.absent then
+		updateSparse(m, phi, y, m.absent)
+		return
+	end
 	local F, P = m.F, m.P
 	local Pphi = table.create(F, 0)
 	local denom = 1
@@ -104,6 +233,13 @@ end
 function RLS.predict(m: Model, r: number, phi: { number }): number
 	local w = m.W[r]
 	local v = 0
+	local ins = m.ins
+	if ins then
+		for _, i in ins[r] do
+			v += w[i] * phi[i]
+		end
+		return v
+	end
 	for i = 1, m.F do
 		v += w[i] * phi[i]
 	end
@@ -132,6 +268,10 @@ function RLS.grow(m: Model, tight: number)
 		m.W[r][F] = 0
 	end
 	m.F = F
+	if m.blocks then
+		local last = m.blocks[#m.blocks]
+		table.insert(last, F)
+	end
 end
 
 -- Set one input's weight for one output and its confidence (the covariance is 1/conf, uncoupled).
