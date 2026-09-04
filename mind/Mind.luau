@@ -527,11 +527,17 @@ function Mind:think(sensesOf, feasible)
 		end
 		self.sameFor = if same then self.sameFor + 1 else 0
 		if self.sameFor >= self.nudgeAfter then
+			-- and hold the nudge for as long as the stuck spell lasted, so it actually displaces the body:
+			-- one random decision handed straight back to the same greedy choice moves nothing
 			self.sameFor = 0
 			self.stats.nudged = (self.stats.nudged or 0) + 1
 			local s = scored[math.random(#scored)]
 			self.stickyPicks = s.p
+			self.nudgeUntil = self.stats.thinks + self.nudgeAfter
 			return finish(table.clone(s.p), nil)
+		end
+		if self.nudgeUntil and self.stats.thinks < self.nudgeUntil and self.stickyPicks and (not feasible or feasible(self.stickyPicks)) then
+			return finish(table.clone(self.stickyPicks), nil)
 		end
 	end
 	if self.eps > 0 and self.exploring and math.random() < self.eps then
