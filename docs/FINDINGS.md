@@ -1486,7 +1486,7 @@ Lua on the predictor's tree-walker; nothing about it is optimised).
 - **A window-limited outcome predictor is the wrong object for a fight**, and the failure is not
   visible in R² or in the offline chooser, both of which looked fine. Only the live loop showed it.
 
-Depth 6 falls back to 21�9 and +8: six chained one-step predictions compound their errors past
+Depth 6 falls back to 21–9 and +8: six chained one-step predictions compound their errors past
 what the extra reach buys. Four or five is the knee here.
 
 Not yet done: the misprediction trigger (the carried plan makes it a one-line comparison) and the
@@ -5374,10 +5374,10 @@ finals), against the newborn's 9/9, 7/9, 5/9, 4/9:
 
 | | 18 | 20 | 24 | 28 |
 |---|---|---|---|---|
-| sigma 0.5 | 3/6 (mean 123) | 4/6 (581) | 3/6 (352) | 0/6 (79) |
-| sigma 1.5 | 1/6 (82) | 2/6 (301) | 2/6 (221) | 4/6 (332) |
+| sigma 0.5 | 3/6 (mean 123) | 4/6 (581) | 4/6 (378) | 1/6 (94) |
+| sigma 1.5 | 1/6 (82) | 3/6 (405) | 3/6 (272) | 4/6 (291) |
 
-Fewer seeds reach the threshold at either scale on three worlds of four; the held draw did not do what the
+Fewer seeds reach the threshold at either scale on three worlds of four (world 24 at 0.5 is the one that does not lose); the held draw did not do what the
 bonuses and the dither could not. With Kestrel's noise floor in mind this is "no sign of a gain", not a proof of
 harm, but it is the seventh exploration idea to read below the newborn, and the line stays closed. RLSVI stays in
 the prototype.
