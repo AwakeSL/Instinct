@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.5
+
+- Tied couplings under `equivariant = true`: one drift law for the self readings and one shared across slots,
+  both reading the pooled last change by kind. With the equivariant effects and the pooled value every model is
+  now flat in the number of slots (settle 287 / 320 / 350 us at 150 / 318 / 738 senses in LuaJIT). Held-out
+  learning 94 / 842 / 388 / 213 rows to threshold against the full model's 187 / 704 / 314 / 207 (FINDINGS 82).
+- Saves carry `CG`/`CS` instead of `Cm` when equivariant.
+
 ## 0.5.4
 
 - **Learning flat in the sense count, as options.** `equivariant = true` (with `groups`): one effects law per

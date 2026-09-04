@@ -267,7 +267,14 @@ function Mind.new(nIn: number, choices: { any }, o: any)
 		self.Hm = RLS.new(1 + nIn, self.nHaz, self.ridge)
 		self.eventLog = {}
 	end
-	if self.has.C then
+	if self.has.C and self.equivariant then
+		-- tied couplings: one drift law for the self readings (from their last change and the pooled slots' last
+		-- change by kind) and one shared across slots for a slot's drift (FINDINGS 82)
+		self.cqPoolN = self.eqKinds * self.eqSlotSize
+		self.CG = RLS.new(1 + #self.eqSelf + self.cqPoolN, #self.eqSelf, self.ridge)
+		self.CS = RLS.new(1 + #self.eqSelf + self.eqSlotSize + self.eqKinds + self.cqPoolN, self.eqSlotSize, self.ridge)
+		self.lastX, self.lastDx = nil, nil
+	elseif self.has.C then
 		self.Cm = RLS.new(1 + nIn, nIn, self.ridge)
 		if self.blocks then
 			self:localise(self.Cm, nIn)
@@ -438,17 +445,21 @@ function Mind:extend(x: { number }, out: { number }?): { number }
 		-- extension within a think (and every candidate in the beam): computed once per settle
 		local drift = self.driftCache
 		if drift == nil then
-			drift = table.create(n, 0)
-			local ld = self.lastDx
-			if ld then
-				local dphi = { 1 }
-				for i = 1, n do
-					dphi[i + 1] = ld[i]
-				end
-				for i = 1, n do
-					local c = RLS.confidence(self.Cm, i)
-					if c > 0 then
-						drift[i] = c * RLS.predict(self.Cm, i, dphi)
+			if self.equivariant then
+				drift = self:cqDrift(self.lastX or x)
+			else
+				drift = table.create(n, 0)
+				local ld = self.lastDx
+				if ld then
+					local dphi = { 1 }
+					for i = 1, n do
+						dphi[i + 1] = ld[i]
+					end
+					for i = 1, n do
+						local c = RLS.confidence(self.Cm, i)
+						if c > 0 then
+							drift[i] = c * RLS.predict(self.Cm, i, dphi)
+						end
 					end
 				end
 			end
@@ -607,6 +618,87 @@ local function optionEffect(self, cache, k: number, X: { number }, phi: { number
 	e = { d = d, conf = if m.n > 0 then total / self.nIn else 0 }
 	cache[k] = e
 	return e
+end
+
+-- the pooled last change of the present slots, by kind
+function Mind:cqPool(dx: { number }, x: { number }): { number }
+	local pool = table.create(self.cqPoolN, 0)
+	local size = self.eqSlotSize
+	for g, B in ipairs(self.eqSlots) do
+		if x[B[1]] ~= 0 then
+			local base = (math.min(g, self.eqKinds) - 1) * size
+			for q, i in ipairs(B) do
+				pool[base + q] += dx[i]
+			end
+		end
+	end
+	return pool
+end
+
+function Mind:cqPhiG(dx: { number }, pool: { number }): { number }
+	local phi = { 1 }
+	for _, i in ipairs(self.eqSelf) do
+		table.insert(phi, dx[i])
+	end
+	for q = 1, self.cqPoolN do
+		table.insert(phi, pool[q])
+	end
+	return phi
+end
+
+function Mind:cqPhiS(dx: { number }, g: number, pool: { number }, out: { number }?): { number }
+	local phi = out or {}
+	phi[1] = 1
+	local k = 1
+	for _, i in ipairs(self.eqSelf) do
+		k += 1
+		phi[k] = dx[i]
+	end
+	for _, i in ipairs(self.eqSlots[g]) do
+		k += 1
+		phi[k] = dx[i]
+	end
+	local kind = math.min(g, self.eqKinds)
+	for q = 1, self.eqKinds do
+		k += 1
+		phi[k] = if q == kind then 1 else 0
+	end
+	for q = 1, self.cqPoolN do
+		k += 1
+		phi[k] = pool[q]
+	end
+	return phi
+end
+
+-- the predicted drift of every sense from the last change, through the tied laws
+function Mind:cqDrift(x: { number }): { number }
+	local n = self.nIn
+	local drift = table.create(n, 0)
+	local ld = self.lastDx
+	if not ld then
+		return drift
+	end
+	local pool = self:cqPool(ld, x)
+	local phiG = self:cqPhiG(ld, pool)
+	for r, i in ipairs(self.eqSelf) do
+		local c = RLS.confidence(self.CG, r)
+		if c > 0 then
+			drift[i] = c * RLS.predict(self.CG, r, phiG)
+		end
+	end
+	local phiS = {}
+	for g, B in ipairs(self.eqSlots) do
+		if x[B[1]] ~= 0 then
+			self:cqPhiS(ld, g, pool, phiS)
+			for r, i in ipairs(B) do
+				local c = RLS.confidence(self.CS, r)
+				if c > 0 then
+					drift[i] = c * RLS.predict(self.CS, r, phiS)
+				end
+			end
+		end
+	end
+	return drift
 end
 
 -- where the trend copy of the senses sits in X (nil without trends)
@@ -1109,7 +1201,25 @@ function Mind:settle(totals: { number }, xNow: { number }, tick: number, over: b
 			for i = 1, self.nIn do
 				dx[i] = xNow[i] - self.lastX[i]
 			end
-			if self.lastDx then
+			if self.lastDx and self.equivariant then
+				local ld = self.lastDx
+				local pool = self:cqPool(ld, self.lastX)
+				local dyG = {}
+				for q, i in ipairs(self.eqSelf) do
+					dyG[q] = dx[i]
+				end
+				RLS.update(self.CG, self:cqPhiG(ld, pool), dyG)
+				local phiS, dyS = {}, {}
+				for g, B in ipairs(self.eqSlots) do
+					if self.lastX[B[1]] ~= 0 and xNow[B[1]] ~= 0 then
+						self:cqPhiS(ld, g, pool, phiS)
+						for q, i in ipairs(B) do
+							dyS[q] = dx[i]
+						end
+						RLS.update(self.CS, phiS, dyS)
+					end
+				end
+			elseif self.lastDx then
 				local dphi = { 1 }
 				for i = 1, self.nIn do
 					dphi[i + 1] = self.lastDx[i]
@@ -1773,7 +1883,11 @@ function Mind:save()
 		end
 	end
 	if self.has.C then
-		out.Cm = RLS.save(self.Cm)
+		if self.equivariant then
+			out.CG, out.CS = RLS.save(self.CG), RLS.save(self.CS)
+		else
+			out.Cm = RLS.save(self.Cm)
+		end
 	end
 	if self.has.H then
 		out.Hm = RLS.save(self.Hm)
@@ -1830,8 +1944,11 @@ function Mind:load(saved)
 			self.ES[k] = RLS.load(saved.ES[k], self.ridge)
 		end
 	end
-	if saved.Cm and self.has.C then
+	if saved.Cm and self.has.C and not self.equivariant then
 		self.Cm = RLS.load(saved.Cm, self.ridge)
+	end
+	if saved.CG and self.equivariant then
+		self.CG, self.CS = RLS.load(saved.CG, self.ridge), RLS.load(saved.CS, self.ridge)
 	end
 	if saved.Hm and self.has.H then
 		self.Hm = RLS.load(saved.Hm, self.ridge)
