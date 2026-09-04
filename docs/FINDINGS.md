@@ -5540,3 +5540,29 @@ the only free lever. It is the covariance that sets that budget, not the problem
 us a decision at 318 senses, where the shipped mind pays 546 us for the think alone. What that budget buys is
 the 7% of final skill in the table above -- the effects tier and the one-step projection are what the
 quadratic cost is for.
+
+## 90. The cost at thirty senses, and what can be cut without losing learning
+
+A Diet creature in Studio cost 365-730 us a think and 750-1,100 us a settle. Profiled in Lune (`scripts/prof_settle`,
+30 senses, one slot present): the flat mind's settle was 425 us, of which the outcome model 231 (F 161: the
+pooled block carried three copies of every field) and the effects 141; the dense mind's 422, of which the
+effects 250 (three models of width 91: the senses and both their copies); the code's 206. The think's parts:
+the beam's look-ahead about a third, extend a sixth.
+
+Paired on eight seeds in the package harness (reached, median episode, score when learned):
+
+| | world 2 | world 24 |
+|---|---|---|
+| code, effects on all copies (ref) | 7/8, 12, 224 | 8/8, 11, 648 |
+| code, effects on senses + trend | 7/8, 12, 224 | 8/8, 11, 673 |
+| code, effects on senses alone | 7/8, 12, 224 | 8/8, 11, 673 |
+| code, senses + trend, beam 3 | 6/8, 14.5, 221 | 6/8, 11, 675 |
+| dense, effects on all copies (ref) | 7/8, 14, 222 | 8/8, 11, 683 |
+| dense, effects on senses + trend | 7/8, 14, 224 | 8/8, 11, 672 |
+| flat, pool with all copies | 8/8, 12.5, 219 | 7/8, 11, 658 |
+| flat, pool of the senses alone | 8/8, 12.5, 222 | 7/8, 13, 668 |
+
+The effects' copies and the pool's copies buy nothing: seed for seed the same. The beam does: three candidates
+lose a seed on each world. Defaults from 0.6.6: effects read the senses and their trend, the pool reads the
+senses alone; the beam stays. Settle in Lune at 30 senses: code 206 -> 143 us, dense 422 -> 292, flat 425 ->
+352. The other free cut is still the decision rate (79): every 0.3 s instead of 0.1 s is a third of the compute.

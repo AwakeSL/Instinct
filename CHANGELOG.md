@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.6
+
+- Cheaper by default, measured equal on eight seeds paired (FINDINGS 90): effects models read the senses and
+  their trend (`effectsInputs = "trend"`; "all" and "raw" remain), and the pooled value pools the senses alone
+  (`poolRaw = false` pools the copies too). Settle in Lune at 30 senses: code 206 -> 143 us, dense 422 -> 292,
+  flat 425 -> 352. A beam of three was tried and loses a seed on each world; the beam stays.
+- `scripts/prof_settle.luau` profiles a settle by model and a think by part (`THINK=1`).
+
 ## 0.6.5
 
 - Coach: a stall rule (`stallAbove`, `stall`), off unless set. Kestrel showed the floor rule cannot see a

@@ -140,6 +140,12 @@ function Mind.new(nIn: number, choices: { any }, o: any)
 	self.nExtra = (if self.has.C then nIn else 0) + self.nHaz + self.nTrace + (if self.trend then nIn else 0)
 	self.groups = o.groups or o.blocks
 	self.nX = nIn + self.nExtra
+	-- EFFECTS INPUTS (o.effectsInputs): "trend" reads the senses and their trend (the default), "all" every copy
+	-- including the couplings' drift, "raw" the senses alone. The copies triple an effects model's width at 30
+	-- senses and the effects are most of a settle there; paired on eight seeds, "trend" and "raw" learned
+	-- exactly as "all" did on both worlds, for the dense mind and the code (FINDINGS 90).
+	self.effectsInputs = o.effectsInputs or "trend"
+	self.nXE = if self.effectsInputs == "raw" then nIn elseif self.effectsInputs == "trend" then nIn + (if o.trend ~= false then nIn else 0) else self.nX
 	self.pooledValue = o.pooledValue == true and self.groups ~= nil and #self.groups >= 2
 	self.nXO = self.nX -- the senses as the outcome model sees them
 	self.nPool = 0
@@ -154,12 +160,20 @@ function Mind.new(nIn: number, choices: { any }, o: any)
 		self.nXO = #self.poolSelf
 		self.poolCopies = { 0 }
 		local off = nIn
-		if self.has.C then
+		-- o.poolRaw = true pools the senses alone, not their drift and trend copies (the pooled block is most
+		-- of the outcome model's width at small sizes)
+		-- (o.poolRaw = false pools the copies too; raw only is the default, measured equal on eight seeds)
+		local poolRaw = o.poolRaw ~= false
+		if self.has.C and not poolRaw then
 			table.insert(self.poolCopies, off)
+		end
+		if self.has.C then
 			off += nIn
 		end
-		if self.trend then
+		if self.trend and not poolRaw then
 			table.insert(self.poolCopies, off)
+		end
+		if self.trend then
 			off += nIn
 		end
 		self.nPool = self.poolSize * (self.poolKinds * #self.poolCopies + nOpt)
@@ -335,9 +349,9 @@ function Mind.new(nIn: number, choices: { any }, o: any)
 	elseif self.has.E then
 		self.E = {}
 		for k = 1, nOpt do
-			self.E[k] = RLS.new(1 + self.nX, nIn, self.ridge)
+			self.E[k] = RLS.new(1 + self.nXE, nIn, self.ridge)
 			if self.blocks then
-				self:localise(self.E[k], self.nX)
+				self:localise(self.E[k], self.nXE)
 			end
 		end
 	end
@@ -731,7 +745,18 @@ end
 
 function Mind:phiE(X: { number }): { number }
 	local phi = { 1 }
-	for i = 1, self.nX do
+	local n = self.nIn
+	if self.effectsInputs == "trend" and self.trend then
+		for i = 1, n do
+			phi[i + 1] = X[i]
+		end
+		local t = self:trendOffset()
+		for i = 1, n do
+			phi[n + i + 1] = X[t + i]
+		end
+		return phi
+	end
+	for i = 1, self.nXE do
 		phi[i + 1] = X[i]
 	end
 	return phi

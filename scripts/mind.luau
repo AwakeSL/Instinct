@@ -167,7 +167,7 @@ end
 -- ------------------------------------------------------------------ the creature
 local GROUPS = Senses.groups(SLOTS, { "timeLeft", "armed" })
 local BLOCKS = if process.env.BLOCKS == "1" then GROUPS else nil
-local OPTS = { set = "OMECA", code = tonumber(process.env.CODE), calibrated = process.env.CALIB ~= "0", separable = process.env.SEP ~= "0", centredFlags = process.env.CENTRED == "1", optionBlock = process.env.OPTBLOCK == "1", readings = READINGS, pref = PREF, horizon = 24, step = 12, beam = 10, blocks = BLOCKS, groups = GROUPS, sparse = process.env.SPARSE == "1", equivariant = process.env.EQUIV == "1", pooledValue = process.env.POOL == "1" }
+local OPTS = { set = "OMECA", code = tonumber(process.env.CODE), calibrated = process.env.CALIB ~= "0", separable = process.env.SEP ~= "0", centredFlags = process.env.CENTRED == "1", optionBlock = process.env.OPTBLOCK == "1", effectsInputs = process.env.EFFIN, poolRaw = process.env.POOLRAW ~= "0", readings = READINGS, pref = PREF, horizon = 24, step = 12, beam = tonumber(process.env.BEAM) or 10, blocks = BLOCKS, groups = GROUPS, sparse = process.env.SPARSE == "1", equivariant = process.env.EQUIV == "1", pooledValue = process.env.POOL == "1" }
 local mind = Mind.new(#NAMES, CHOICES, OPTS)
 -- COACH=floor: rebirth below the random floor; COACH=stall: and when stalled within half the way to greedy
 local coach = Coach.new(mind, {
