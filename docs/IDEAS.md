@@ -1,5 +1,10 @@
 # Every idea, and what it measured
 
+**Shared document.** More than one model writes here. Conventions: read the whole file before proposing; add a
+proposal as a row under *Proposed, untested* with your name and date; move it to *Kept* or *Tried and dropped*
+only with a number from a run and a section in `FINDINGS.md`; never rewrite or delete another writer's row;
+append a note under it if you disagree. The log is the evidence; this file is the index.
+
 One line per idea: what it was, the number it got, the verdict, and the section of `docs/FINDINGS.md` (the full
 running log) with the detail. Read this before proposing anything; most obvious ideas are here with a number.
 
@@ -95,3 +100,46 @@ never tuned on (`tabgen.lua`, worlds 18 / 20 / 24 / 28), mean of the last ten ep
 - Newborn reliability: one seed in three still learns a world late even with the coach (67-68).
 - Knowledge transfer works through live weights and tag-level priors, not through distilled weight files on new
   worlds (63, 73).
+- Where the tick actually goes, profiled on world 2 at 37 senses and 80 combinations (`scripts/prof_mind.luau`,
+  Lune; Studio native about 3x): think 155 us, settle 506 us, 661 us a tick. Of the learning, the thirteen effects
+  models (F=112, NR=37, four updated a tick) are 73%, the outcome model 22%, the couplings 5%. The effects
+  covariance is the cost, and 49, 59, 62 and 78 all say it is the part that will not be shared or thinned.
+
+### Proposed, not yet measured
+
+Three ideas that survive a read of the tables above. All must beat the held-out baseline 187/704/314/207.
+
+- **Slot-equivariant effects.** One law a slot-*kind*, weights tied across the slot groups `Senses.groups` already
+  names, each slot read in its own relative frame. Effects outputs fall from every sense to one slot's worth plus
+  the globals, and every slot's rows train the same parameters: about 4x fewer effects parameters and 4x the rows a
+  parameter, so it should *raise* learning if the law really is one law, and flatten the slots and lose if they
+  differ in kind. Untried: 56-57 kept slot *senses*, not tied weights, and 76-77 partitioned the covariance, never
+  the weights. Note this ties weights and leaves each model its own covariance, which is what 78 says not to touch.
+  It also opens the cheap route to bonds: a few learned numbers a remembered individual, carried in the slot as
+  extra senses and read by the shared law, so the physics stays general and the relationship stays specific.
+
+- **Separable pick search.** `phiO` makes the value additive in the picks: option flags are one-hot per choice and
+  the descriptor terms sum over choices (`acc[q]` is a sum), so value = base(X) + sum over choices of w[option],
+  exactly. Only acquired features pairing two flags from *different* choices break it, and those are enumerable. So
+  the best combination is the per-choice argmax, once per target option, plus a correction over the cross terms and
+  a feasibility repair; k-best per-choice lists feed the beam unchanged. This is an identity, not a prune -- 37
+  killed approximate pruning and hierarchical think, but this returns the same combination, so learning cannot
+  move and only the clock should change. The first pass then costs the target options rather than their product,
+  so a thousand combinations cost what twenty do. Measure against the attention gate (48), which already skips
+  60-70% of thinks and so caps what this can be worth.
+
+- **Deferred learning, not lazier learning.** Rows already settle a horizon late; nothing requires the four effects
+  updates, the outcome update and the couplings update to land on one tick. Push them as jobs and drain to a
+  microsecond budget a tick: cost becomes the budget, flat and independent of the sense count, and a spike becomes
+  a backlog instead of a dropped frame. Distinct from every neighbouring loss -- error-gated learning, lazy effects
+  outputs, couplings every 4th tick (71, 77) and shared physics from 1 row in 2 or 4 (78) all *discard* rows, and a
+  draining queue discards none. The risk is exactly that: under sustained load a queue that never drains decays
+  into the subsampling 78 measured at about a quarter of the learning, so the test has to report the backlog
+  alongside the score.
+
+## Proposed, untested
+
+| idea | proposed by | date | note |
+|---|---|---|---|
+| Low-rank (Frequent Directions) sketch of the effects covariance, rank ~32: update cost linear in inputs times rank, cross-terms kept approximately | Claude | 2026-09-04 | being built; see FINDINGS 80 when it exists |
+| Effects models read senses + trends, not the couplings' drift (inputs 3n -> 2n) | Claude | 2026-09-04 | running on the held-out worlds |
