@@ -222,7 +222,13 @@ function Mind.new(nIn: number, choices: { any }, o: any)
 		end
 	end
 	self.nDescr = if self.descr then self.descrDim * (1 + #self.descrInputs) else 0
-	self.FO = 1 + self.nXO + nOpt + self.nPool + self.nDescr
+	-- OPTION BLOCK (o.optionBlock = true; Kestrel's row): every option read on the senses, a weight vector an
+	-- option (the picked option's flag times each sense), so a choice can depend on the state without waiting
+	-- for acquisition to find the pair. Under the pooled value the block reads the self readings only (the
+	-- slots already enter by option through the pool).
+	self.optionBlock = o.optionBlock == true
+	self.nOptBlock = if self.optionBlock then nOpt * self.nXO else 0
+	self.FO = 1 + self.nXO + nOpt + self.nPool + self.nOptBlock + self.nDescr
 	self.O = RLS.new(self.FO, self.NRO, self.valueRidge)
 	for i = 1 + nIn + 1, 1 + self.nXO do
 		self.O.P[i][i] = 1 / self.extraRidge
@@ -670,6 +676,20 @@ function Mind:phiO(X: { number }, picks: { number }, out: { number }?): { number
 		end
 		k = base + self.nPool
 	end
+	if self.optionBlock then
+		local nXO = self.nXO
+		local base = k
+		for q = 1, self.nOptBlock do
+			phi[base + q] = 0
+		end
+		for ci = 1, #self.choices do
+			local ob = base + (self.optIndex[ci][picks[ci]] - 1) * nXO
+			for q = 1, nXO do
+				phi[ob + q] = phi[q + 1]
+			end
+		end
+		k = base + self.nOptBlock
+	end
 	if self.descr then
 		local D = self.descrDim
 		local acc = self.descrAcc
@@ -1114,6 +1134,8 @@ function Mind:pickDepOf(idx: number): any
 			return nil
 		end
 		return self.optChoice[(r - 1) // self.poolSize + 1]
+	elseif idx <= 1 + nXO + nOpt + self.nPool + self.nOptBlock then
+		return self.optChoice[(idx - (1 + nXO + nOpt + self.nPool) - 1) // nXO + 1]
 	elseif idx <= self.FO then
 		return false
 	end
@@ -1149,6 +1171,10 @@ local function sepEntry(self, ctx, idx: number, p: { number }): number
 		end
 		local g = (r - 1) // size + 1
 		return if p[self.optChoice[g]] == self.optLocal[g] then ctx.poolSum[r - (g - 1) * size] else 0
+	elseif idx <= 1 + nXO + nOpt + self.nPool + self.nOptBlock then
+		local r = idx - (1 + nXO + nOpt + self.nPool)
+		local g = (r - 1) // nXO + 1
+		return if p[self.optChoice[g]] == self.optLocal[g] then ctx.phiB[r - (g - 1) * nXO + 1] else 0
 	elseif idx <= self.FO then
 		local D = self.descrDim
 		local r = idx - (1 + nXO + nOpt + self.nPool)
@@ -1211,7 +1237,7 @@ function Mind:scoreCombos(Xs: { { number } }, feasible, scored)
 	local poolOptBase = 1 + nXO + nOpt + (if pooled then kinds * nc * size else 0)
 	local descr = self.descr
 	local D = if descr then self.descrDim else 0
-	local dBase = 1 + nXO + nOpt + nPool
+	local dBase = 1 + nXO + nOpt + nPool + self.nOptBlock
 	local ds = self.descrInputs
 	local ctxs, bases, deltas, cross = {}, {}, {}, {}
 	for a = 1, #choices[1].options do
@@ -1290,6 +1316,12 @@ function Mind:scoreCombos(Xs: { { number } }, feasible, scored)
 					local ob = poolOptBase + (g - 1) * size
 					for q = 1, size do
 						v += u[ob + q] * poolSum[q]
+					end
+				end
+				if self.optionBlock then
+					local ob = 1 + nXO + nOpt + nPool + (g - 1) * nXO
+					for q = 1, nXO do
+						v += u[ob + q] * phiB[q + 1]
 					end
 				end
 				if descr then
@@ -1595,7 +1627,7 @@ end
 -- A settled row joins the recent record (raw inputs and readings) for the search.
 local function remember(self, phi: { number }, y: { number })
 	local raw = {}
-	local nRaw = self.nXO + self.nOpt + self.nPool
+	local nRaw = self.nXO + self.nOpt + self.nPool + self.nOptBlock
 	for i = 1, nRaw do
 		raw[i] = phi[i + 1]
 	end
@@ -1823,7 +1855,7 @@ end
 -- the row's residual for each chosen option that has a descriptor, at a rate that fades as its rows mount.
 function Mind:descrStep(r, y: { number })
 	local O, D = self.O, self.descrDim
-	local base = 1 + self.nXO + self.nOpt + self.nPool
+	local base = 1 + self.nXO + self.nOpt + self.nPool + self.nOptBlock
 	local score, predicted = 0, self:valueOf(r.phi)
 	for q = 1, self.NRO do
 		score += self.pref[q] * y[q]
@@ -1873,7 +1905,7 @@ function Mind:acquire()
 		table.insert(rows, all[k])
 	end
 	local R = #rows
-	local nRaw = self.nXO + self.nOpt + self.nPool
+	local nRaw = self.nXO + self.nOpt + self.nPool + self.nOptBlock
 	-- the residuals to chase: the value's, and the worst reading's
 	local targets = { { name = "value", res = {} } }
 	if self.acqReading then
@@ -2115,7 +2147,7 @@ function Mind:featureIndex(name: string, names: { string }): number?
 		end
 	end
 	if self.descr then
-		local base = 1 + self.nXO + self.nOpt + self.nPool
+		local base = 1 + self.nXO + self.nOpt + self.nPool + self.nOptBlock
 		local q = tonumber(name:match("^tag(%d+)$"))
 		if q and q >= 1 and q <= self.descrDim then
 			return base + q
@@ -2138,7 +2170,7 @@ function Mind:descrFeatureName(f: number, names: { string }): string?
 	if not self.descr then
 		return nil
 	end
-	local base = 1 + self.nXO + self.nOpt + self.nPool
+	local base = 1 + self.nXO + self.nOpt + self.nPool + self.nOptBlock
 	if f > base and f <= base + self.descrDim then
 		return "tag" .. (f - base)
 	end
@@ -2189,6 +2221,14 @@ function Mind:inputName(i: number, names: { string }): string
 			if k == i then
 				return c.name .. "=" .. o
 			end
+		end
+	end
+	if self.optionBlock then
+		local r = i - self.nXO - self.nOpt - self.nPool
+		if r >= 1 and r <= self.nOptBlock then
+			local g = (r - 1) // self.nXO + 1
+			local c = self.choices[self.optChoice[g]]
+			return c.name .. "=" .. c.options[self.optLocal[g]] .. "*" .. self:inputName(r - (g - 1) * self.nXO, names)
 		end
 	end
 	return "in" .. i

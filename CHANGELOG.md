@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.5
+
+- Coach: a stall rule (`stallAbove`, `stall`), off unless set. Kestrel showed the floor rule cannot see a
+  creature that sits above the random score but far under the threshold (world 24's failures sat at 34-276
+  over a floor of 62); with `stallAbove` set, a creature within that much of the floor that has not improved
+  over `stall` checks is reborn. With the row calibration on, the harness's remaining failures sit near the
+  threshold and the rule did not fire, so no gain is claimed yet.
+- `optionBlock = true` (off by default): every option read on the self readings, one weight vector an option,
+  exact under the separable pass (Kestrel's suggestion from a second learner); paired test pending.
+- Harness: `COACH=floor|stall`, `OPTBLOCK=1`; the result line reports rebirths.
+
 ## 0.6.4
 
 - Distilled knowledge carries the physics: the effects models (`effects`), the couplings (`drift`) and, for

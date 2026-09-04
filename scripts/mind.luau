@@ -167,9 +167,14 @@ end
 -- ------------------------------------------------------------------ the creature
 local GROUPS = Senses.groups(SLOTS, { "timeLeft", "armed" })
 local BLOCKS = if process.env.BLOCKS == "1" then GROUPS else nil
-local OPTS = { set = "OMECA", code = tonumber(process.env.CODE), calibrated = process.env.CALIB ~= "0", separable = process.env.SEP ~= "0", centredFlags = process.env.CENTRED == "1", readings = READINGS, pref = PREF, horizon = 24, step = 12, beam = 10, blocks = BLOCKS, groups = GROUPS, sparse = process.env.SPARSE == "1", equivariant = process.env.EQUIV == "1", pooledValue = process.env.POOL == "1" }
+local OPTS = { set = "OMECA", code = tonumber(process.env.CODE), calibrated = process.env.CALIB ~= "0", separable = process.env.SEP ~= "0", centredFlags = process.env.CENTRED == "1", optionBlock = process.env.OPTBLOCK == "1", readings = READINGS, pref = PREF, horizon = 24, step = 12, beam = 10, blocks = BLOCKS, groups = GROUPS, sparse = process.env.SPARSE == "1", equivariant = process.env.EQUIV == "1", pooledValue = process.env.POOL == "1" }
 local mind = Mind.new(#NAMES, CHOICES, OPTS)
-local coach = Coach.new(mind, { explore = 5, every = 10, floor = nil })
+-- COACH=floor: rebirth below the random floor; COACH=stall: and when stalled within half the way to greedy
+local coach = Coach.new(mind, {
+	explore = 5,
+	every = 10,
+	floor = if process.env.COACH then "explore" else nil,
+})
 -- INSTINCTS=1: born with the forage instincts (the place's Instincts.forage, in this world's names)
 if process.env.INSTINCTS == "1" then
 	mind:learnFrom({
@@ -216,6 +221,9 @@ rnd, grd = rnd / 10, grd / 10
 local thr = rnd + 0.5 * (grd - rnd)
 coach.floor = rnd
 print(("world %d: random %.0f, greedy %.0f, threshold %.0f  (%d senses, %d combinations)"):format(WORLD, rnd, grd, thr, #NAMES, #mind.combos))
+if process.env.COACH == "stall" then
+	coach.stallAbove = (grd - rnd) / 2
+end
 
 local recent, reached, reachedRows = {}, nil, nil
 local sum = 0
@@ -239,13 +247,15 @@ for g = 1, EPIS do
 		sum = 0
 	end
 end
-print(("RESULT world %d: %s, last 10 episodes %.0f (greedy %.0f), %.0f us a think, %.1f s in all, acquired: %s"):format(
+print(("RESULT world %d: %s, last 10 episodes %.0f (greedy %.0f), %.0f us a think, %.1f s in all, rebirths %d (%d stalled), acquired: %s"):format(
 	WORLD,
 	if reached then ("threshold at episode %d after %d rows"):format(reached, reachedRows) else "threshold never reached",
 	coach:rolling(),
 	grd,
 	mind:microsecondsAThink(),
 	os.clock() - t0,
+	coach.rebirths,
+	coach.stalls or 0,
 	table.concat(mind:acquiredNames(NAMES), "  ")
 ))
 

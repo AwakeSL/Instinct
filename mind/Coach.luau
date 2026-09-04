@@ -20,6 +20,12 @@ export type Options = {
 	every: number?, -- how often the floor is checked, in episodes (10)
 	window: number?, -- episodes in the rolling score (10)
 	floor: (number | string)?, -- the random policy's score; "explore" takes the mean of the exploration episodes; nil never rebirths
+	-- STALL (Kestrel's row): a creature can sit above the random floor and still be lost, so the floor never
+	-- fires (world 24's failures sat at 34-276 over a floor of 62, under half the threshold). With `stallAbove`
+	-- set, a creature whose rolling score is within that much of the floor and has not improved over the last
+	-- `stall` checks is reborn too.
+	stallAbove: number?, -- how far above the floor still counts as lost (score units; nil: no stall rule)
+	stall: number?, -- checks without improvement before a stalled creature is reborn (2)
 }
 
 function Coach.new(mind: any, o: Options?)
@@ -30,6 +36,9 @@ function Coach.new(mind: any, o: Options?)
 	self.every = o.every or 10
 	self.window = o.window or 10
 	self.floor = o.floor
+	self.stallAbove = o.stallAbove
+	self.stall = o.stall or 2
+	self.checks = {}
 	self.episode = 0
 	self.exploreUntil = self.explore
 	self.recent = {} :: { number }
@@ -67,10 +76,20 @@ function Coach:endEpisode(score: number): boolean
 		m += v
 	end
 	m /= #self.recent
-	if m < self.floor then
+	table.insert(self.checks, m)
+	local lost = m < self.floor
+	if not lost and self.stallAbove and m < self.floor + self.stallAbove and #self.checks > self.stall then
+		-- no better than it was `stall` checks ago, and still near the floor
+		lost = m <= self.checks[#self.checks - self.stall]
+		if lost then
+			self.stalls = (self.stalls or 0) + 1
+		end
+	end
+	if lost then
 		self.mind:rebirth()
 		self.exploreUntil = self.episode + self.explore
 		self.rebirths += 1
+		self.checks = {}
 		return true
 	end
 	return false
