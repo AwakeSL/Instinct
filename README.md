@@ -102,10 +102,11 @@ of the learning on held-out worlds (FINDINGS 76-77):
   slots that never return; a slot that comes and goes needs the reset (`sparseReset = true`, which zeroes a
   returning slot's cross-covariance).
 
-The guidance that follows from the measurements: keep the full update below about sixty senses a creature, decide
-at ten decisions a second (`thinkEvery = 0.1`) only for creatures that are fighting, and give a slot to what a
-creature needs to react to rather than to everything it could sense. Above sixty senses, pick which quarter to
-give up.
+The guidance that follows from the measurements: keep the full update below about sixty senses a creature, and
+give a slot to what a creature needs to react to rather than to everything it could sense. The one cut that does
+not touch the models is the decision rate: deciding every 0.3 s instead of every 0.1 s costs a third of the compute
+and stayed within seed noise on three held-out worlds of four (FINDINGS 79), so decide ten times a second only for
+creatures that are fighting. Above sixty senses, pick which quarter to give up.
 
 ## Checking it
 
