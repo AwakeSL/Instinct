@@ -148,14 +148,52 @@ function Mind.new(nIn: number, choices: { any }, o: any)
 	self.descrDim = o.descrDim or 0
 	self.descrLearn = o.descrLearn or 0
 	self.descrN = {}
-	self.descrSenses = o.descrSenses
-	if self.descr and not self.descrSenses then
-		self.descrSenses = {}
-		for i = 1, nIn do
-			self.descrSenses[i] = i
+	-- the outcome inputs the descriptors interact with (phi positions). o.descrSenses names raw senses; the
+	-- default is every sense, or under the pooled value the self readings and the pooled fields by kind, so the
+	-- block is D x (self + kinds x fields) whatever the slot count (Bingo's row in the ledger)
+	self.descrInputs = {}
+	if self.descr then
+		if self.pooledValue then
+			local nc, size = #self.poolCopies, self.poolSize
+			if o.descrSenses then
+				for _, i in ipairs(o.descrSenses) do
+					local q = table.find(self.poolSelf, i)
+					if q then
+						table.insert(self.descrInputs, q + 1)
+					else
+						for g, B in ipairs(self.poolSlots) do
+							local f = table.find(B, i)
+							if f then
+								local kind = math.min(g, self.poolKinds) - 1
+								local idx = 1 + self.nXO + nOpt + kind * nc * size + f
+								if not table.find(self.descrInputs, idx) then
+									table.insert(self.descrInputs, idx)
+								end
+							end
+						end
+					end
+				end
+			else
+				for q = 1, self.nXO do
+					table.insert(self.descrInputs, q + 1)
+				end
+				for kind = 0, self.poolKinds - 1 do
+					for f = 1, size do
+						table.insert(self.descrInputs, 1 + self.nXO + nOpt + kind * nc * size + f)
+					end
+				end
+			end
+		elseif o.descrSenses then
+			for _, i in ipairs(o.descrSenses) do
+				table.insert(self.descrInputs, i + 1)
+			end
+		else
+			for i = 1, nIn do
+				table.insert(self.descrInputs, i + 1)
+			end
 		end
 	end
-	self.nDescr = if self.descr then self.descrDim * (1 + #self.descrSenses) else 0
+	self.nDescr = if self.descr then self.descrDim * (1 + #self.descrInputs) else 0
 	self.FO = 1 + self.nXO + nOpt + self.nPool + self.nDescr
 	self.O = RLS.new(self.FO, self.NRO, self.valueRidge)
 	for i = 1 + nIn + 1, 1 + self.nXO do
@@ -577,12 +615,12 @@ function Mind:phiO(X: { number }, picks: { number }, out: { number }?): { number
 			k += 1
 			phi[k] = acc[q]
 		end
-		local ds = self.descrSenses
+		local ds = self.descrInputs
 		for q = 1, D do
 			local a = acc[q]
-			for _, i in ipairs(ds) do
+			for _, idx in ipairs(ds) do
 				k += 1
-				phi[k] = a * X[i]
+				phi[k] = a * phi[idx]
 			end
 		end
 	end
@@ -1017,13 +1055,13 @@ local function sepEntry(self, ctx, idx: number, p: { number }): number
 	elseif idx <= self.FO then
 		local D = self.descrDim
 		local r = idx - (1 + nXO + nOpt + self.nPool)
-		local q, i
+		local q, idx
 		if r <= D then
 			q = r
 		else
-			local nDS = #self.descrSenses
+			local nDS = #self.descrInputs
 			q = (r - D - 1) // nDS + 1
-			i = self.descrSenses[(r - D - 1) % nDS + 1]
+			idx = self.descrInputs[(r - D - 1) % nDS + 1]
 		end
 		local acc = 0
 		for ci = 1, #self.choices do
@@ -1032,7 +1070,7 @@ local function sepEntry(self, ctx, idx: number, p: { number }): number
 				acc += d[q]
 			end
 		end
-		return if i then acc * ctx.X[i] else acc
+		return if idx then acc * ctx.phiB[idx] else acc
 	end
 	local a = self.acquired[idx - self.FO]
 	return OPS[a.op](sepEntry(self, ctx, a.i + 1, p), sepEntry(self, ctx, a.j + 1, p))
@@ -1077,7 +1115,7 @@ function Mind:scoreCombos(Xs: { { number } }, feasible, scored)
 	local descr = self.descr
 	local D = if descr then self.descrDim else 0
 	local dBase = 1 + nXO + nOpt + nPool
-	local ds = self.descrSenses
+	local ds = self.descrInputs
 	local ctxs, bases, deltas, cross = {}, {}, {}, {}
 	for a = 1, #choices[1].options do
 		local X = Xs[a]
@@ -1130,8 +1168,8 @@ function Mind:scoreCombos(Xs: { { number } }, feasible, scored)
 			for q = 1, D do
 				local g = u[dBase + q]
 				local row = dBase + D + (q - 1) * nDS
-				for t, i in ipairs(ds) do
-					g += u[row + t] * X[i]
+				for t, idx in ipairs(ds) do
+					g += u[row + t] * phiB[idx]
 				end
 				gq[q] = g
 			end
@@ -1688,7 +1726,7 @@ function Mind:descrStep(r, y: { number })
 	if e ~= e then
 		return
 	end
-	local ds = self.descrSenses
+	local ds = self.descrInputs
 	for ci = 1, #self.choices do
 		local k = self.optIndex[ci][r.picks[ci]]
 		local d = self.descriptors[k]
@@ -1703,8 +1741,8 @@ function Mind:descrStep(r, y: { number })
 						local W = O.W[rr]
 						local t = W[base + q]
 						local off = base + D + (q - 1) * #ds
-						for j, i in ipairs(ds) do
-							t += W[off + j] * r.X[i]
+						for j, idx in ipairs(ds) do
+							t += W[off + j] * r.phi[idx]
 						end
 						g += w * t
 					end
@@ -1961,9 +1999,9 @@ function Mind:featureIndex(name: string, names: { string }): number?
 		local q2, sn = name:match("^tag(%d+)%*(.+)$")
 		if q2 then
 			q2 = tonumber(q2)
-			for j, i in ipairs(self.descrSenses) do
-				if names[i] == sn and q2 >= 1 and q2 <= self.descrDim then
-					return base + self.descrDim + (q2 - 1) * #self.descrSenses + j
+			for j, idx in ipairs(self.descrInputs) do
+				if self:inputName(idx - 1, names) == sn and q2 >= 1 and q2 <= self.descrDim then
+					return base + self.descrDim + (q2 - 1) * #self.descrInputs + j
 				end
 			end
 		end
@@ -1980,11 +2018,11 @@ function Mind:descrFeatureName(f: number, names: { string }): string?
 	if f > base and f <= base + self.descrDim then
 		return "tag" .. (f - base)
 	end
-	local ds = self.descrSenses
+	local ds = self.descrInputs
 	if f > base + self.descrDim and f <= base + self.descrDim * (1 + #ds) then
 		local off = f - base - self.descrDim - 1
 		local q, j = math.floor(off / #ds) + 1, (off % #ds) + 1
-		return ("tag%d*%s"):format(q, names[ds[j]] or ("in" .. ds[j]))
+		return ("tag%d*%s"):format(q, self:inputName(ds[j] - 1, names))
 	end
 	return nil
 end

@@ -18,8 +18,29 @@ local CHOICES = {
 	{ name = "act", options = acts },
 }
 local flat = process.env.EQUIV == "1"
+-- DESCR=1: every act carries a random descriptor of six numbers (tags), read against the senses
+local descriptors, descrDim = nil, 0
+if process.env.DESCR == "1" then
+	descriptors, descrDim = {}, 6
+	local k = 0
+	for ci, c in ipairs(CHOICES) do
+		for oo = 1, #c.options do
+			k += 1
+			if ci == 3 then
+				local d = {}
+				for q = 1, 6 do
+					d[q] = math.random() * 2 - 1
+				end
+				descriptors[k] = d
+			end
+		end
+	end
+end
 local function build(separable)
 	local m = Mind.new(#NAMES, CHOICES, {
+		descriptors = descriptors,
+		descrDim = descrDim,
+		descrLearn = 0.05,
 		set = "OMECA",
 		readings = { "dealt", "taken", "eaten" },
 		pref = { dealt = 1, taken = -1, eaten = 20 },
@@ -63,6 +84,35 @@ local function run(separable)
 		x = senses()
 	end
 	return (os.clock() - t0) / 200 * 1e6
+end
+if process.env.CHECK == "1" then
+	-- the separable scoring against the full one, on a mind with descriptors and acquired features
+	local m = build(true)
+	local orig = Mind.scoreCombos
+	local maxErr, n = 0, 0
+	m.scoreCombos = function(self, Xs, feasible, scored)
+		orig(self, Xs, feasible, scored)
+		local phi = {}
+		for _, sc in ipairs(scored) do
+			maxErr = math.max(maxErr, math.abs(self:worth(Xs[sc.p[1]], sc.p, phi) - sc.v))
+			n += 1
+		end
+	end
+	local x = senses()
+	local eaten = 0
+	for t = 1, 600 do
+		local picks, xr, phi, event = m:think(function()
+			return x
+		end)
+		m:note(xr, phi, picks, event, { 0, 0, eaten }, t)
+		x = senses()
+		if math.random() < 0.1 then
+			eaten += 1
+		end
+		m:settle({ 0, 0, eaten }, x, t, false)
+	end
+	print(("CHECK: %d combinations, %d acquired, descriptor inputs %d, max error %.3g"):format(n, #m.acquired, #m.descrInputs, maxErr))
+	return
 end
 local full, sep = run(false), run(true)
 print(("%d acts x 20 = %d combinations: think %.0f us full, %.0f us separable (%.1fx)"):format(ACTS, ACTS * 20, full, sep, full / sep))

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.9
+
+- Descriptors interact with outcome inputs rather than raw senses: under `pooledValue` the default set is the
+  self readings plus the pooled fields by kind, so the descriptor block is D x (self + kinds x fields) whatever
+  the slot count (it was D x every sense). `descrSenses` still names raw senses and is mapped onto the pooled
+  layout. Exact against the full scoring (`DESCR=1 CHECK=1 lune run scripts/bench_think`).
+
 ## 0.5.8
 
 - Fix: under `pooledValue` instinct names (`learnFrom`) resolved slot senses to the wrong inputs; they now land

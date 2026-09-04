@@ -5213,3 +5213,126 @@ worlds of four (the newborn's own finals span 4 to 242 on world 18 and 215 to 94
 the threshold in far fewer rows, since each row now spans three ticks of consequence. Of everything tried for
 cost, this is the only cut that does not attack the models, and the guidance is: creatures that are not in a
 fight decide every 0.2 to 0.3 s.
+
+## 80. Slot-equivariant effects (proposed in the ledger by another model)
+
+One law per option for how the self and world readings change (inputs: those readings and their trends), and one
+law per option, shared across every slot, for how a slot's seven readings change (inputs: the self readings, the
+slot's own readings, their trends, and the slot's kind as a one-hot). Every present slot's rows train the same law;
+absent slots are skipped, exactly, since there is nothing to predict. Parameters no longer grow with the slot
+count; cost grows with the slots present. EQUIV=1 in tabmind3.lua, needs o.blocks (self group first).
+
+| senses (slots present) | full effects, settle a decision | equivariant | think, full -> equivariant |
+|---|---|---|---|
+| 38 (4) | 160 us | 80 us | 113 -> 113 |
+| 150 (4 of 20) | 2,053 us | 460 us | 193 -> 147 |
+| 318 (4 of 44) | 8,917 us | 1,990 us | 417 -> 230 |
+
+World 2, seed 1: 174 against the full model's 164. What remains of the square at 318 senses is the outcome model's
+own covariance (F = 659), about three quarters of the 1,990 us. Six seeds on the held-out worlds are running; if
+they hold, the effects square is gone without dropping a cross-term, because the law was never per slot.
+
+**Six seeds, first version:** 122 / 750 / 126 / 49 against 187 / 704 / 314 / 207. Wins the item world, loses the
+three with hostiles or a switch. The self law read only the self readings, so it could not predict that health
+falls when a hostile is near, and the slot law could not see where the other slots were. The equivariant remedy is
+pooling: a fixed-size summary of every present slot, sums of each field by kind, as an input to both laws
+(EQUIV_POOL, on by default now). Running.
+**With the pool, six seeds: 155 / 815 / 216 / 152** against 187 / 704 / 314 / 207 (means 335 against 353): the
+first cut of the learning update that holds its learning on the held-out worlds. Settle at 318 senses 2,370 us
+against 8,917; parameters fixed whatever the slot count. Kept (EQUIV=1 with the pool). The arena harness has no
+slot layout, so it cannot be run there. What remains quadratic is the outcome model's own covariance, and the
+same trick applies to it: the value's slot inputs become sums over the present slots of field-by-kind and
+field-by-option terms, a fixed-size vector, so the value is one linear model whose size does not grow with the
+slots either (OVALUE=pool, next).
+
+## 81. A pooled outcome model
+
+The value's slot inputs become sums over the present slots: each field by kind, from every copy the mind holds
+(raw, drift, trend), plus each field by the chosen options. One linear model of fixed size (F = 247 here) whatever
+the slot count; with equivariant effects the whole learning update is then flat in the senses (settle 2.8 ms at
+318 senses against 8.9 full, and constant beyond). Learning: world 2 seed 1 scored 68 at ridge 1, 138 at ridge
+4, 194 at ridge 12 (the full model 164–236 on that seed). The reason is the one section 77 found: absent slots in
+the raw model each carry a constant "distance 2" that damps every update, and the pooled model has no such
+constants, so it needs its ridge set explicitly. Held-out worlds at ridge 12 and 30 running.
+**Six seeds** (held-out, mean final; full model 187 / 704 / 314 / 207, mean 353; equivariant effects with the
+full value 155 / 815 / 216 / 152, mean 335):
+
+| pooled value + equivariant effects | 18 | 20 | 24 | 28 | mean |
+|---|---|---|---|---|---|
+| ridge 12 | 151 | 640 | 243 | 184 | 305 |
+| ridge 30 | 140 | 774 | 352 | 122 | 347 |
+
+At ridge 30 the whole learning update is flat in the sense count and lands at parity with the full model on the
+mean (347 against 353), within the seed spread on every world. That is the scaling answer: the effects tied across
+slots with a pooled context, the value reading pooled slot terms, and an explicit ridge in place of the damping the
+absent slots used to supply. What still grows with the senses is the couplings model (n outputs from n inputs);
+the same tying applies to it and is next.
+
+## 82. Tied couplings, and the ridge that must not be shared
+
+CEQUIV=1 ties the couplings across slots the same way (one law for the self readings' drift from their last
+change and the pooled slots' last change, one law shared across slots for a slot's drift). With that, every
+learned model is flat in the sense count: settle 287 / 320 / 350 us at 150 / 318 / 738 senses (full covariance:
+2,053 / 8,917 / far more). The first run of the flat mind scored 32 on world 2 and it was the ridge: the pooled
+value needs ridge 30 but the same number had been applied to the physics models, which want 1. Tied couplings
+alone at ridge 1 score 216 on world 2. With the outcome model given its own ridge (ORIDGE=30, everything else at
+1) the flat mind scores 204 on world 2 (greedy 206). Six seeds on the held-out worlds running. The package has the
+same split (`valueRidge`), and its headless check with equivariant effects and the pooled value lands at 220 of 220.
+
+**Six seeds, the fully flat mind** (equivariant effects, pooled value at ridge 30, tied couplings, physics at
+ridge 1): **94 / 842 / 388 / 213**, mean 384 against the full model's 187 / 704 / 314 / 207 (mean 353), and
+against 140 / 774 / 352 / 122 without the tied couplings. Above the full model on three worlds of four; the turret
+world (18) is the one it loses, by half. Settle cost 287 / 320 / 350 us at 150 / 318 / 738 senses in LuaJIT: flat.
+That is the scaling answer this session was after: parameters tied across slots, presence pooled by kind, and the
+value's ridge set explicitly; nothing dropped, nothing subsampled.
+
+## 83. Overlapping rows weighted 1/H (Bingo's calibration), and the separable pick search (Lume, Bingo)
+
+Bingo showed the outcome covariance is ~44x overconfident because consecutive rows share H-1 of their H ticks,
+and proposed weighting an outcome row 1/H (effects rows 1/STEP): the update's denominator starts at H instead of
+1. Free calibration of P, they argued, since the true weight error was unchanged offline. On the flat mind, 3 seeds,
+held-out rows to threshold (flat's 6 seeds: 94 / 842 / 388 / 213, mean 384):
+
+| | 18 | 20 | 24 | 28 | mean |
+|---|---|---|---|---|---|
+| outcome rows 1/H | 186 | 664 | 403 | 164 | 354 |
+| effects rows 1/STEP | 148 | 818 | 260 | 120 | 337 |
+| both | 97 | 507 | 397 | 304 | 326 |
+
+Better on the turret world, worse on 20 and 28, and below on the mean, every arm: the smaller early gain is
+what the newborn pays. The calibration may still be right about P's *claims* (spread, confidence), but this
+benchmark is rows to threshold and it does not move. Not adopted; OWEIGHT / EWEIGHT stay in the prototype.
+
+The separable pick search is in the package (0.5.6): the value is linear in phi and phi is additive in the picks,
+so worth(combination) = base(target) + one number a chosen option, plus the acquired features that pair two
+choices, evaluated per combination (none arise from acquisition, which always pairs a raw sense). Checked
+against the full worth() on every combination scored over 60,000 thinks: max error 1.4e-14. Think cost in Lune,
+20 combinations a target, dense mind: 200 combinations 1,197 -> 438 us; 2,000 combinations 11,791 -> 1,840 us;
+14,000 combinations (700 acts) 278,320 -> 15,411 us (18x). Flat mind at 2,000: 51,878 -> 2,796 us.
+
+Bingo's three exact identities are in the package's RLS.update (0.5.7): zero-skipping in the matvec when a fair
+share of the inputs are zero, the symmetric downdate done once a pair and mirrored, and a row counted k times as
+one closed-form update. Against the textbook update: 7e-16 on the weights, 3e-16 on the covariance. Settle in
+Lune, a quarter of the slots present: 37 senses 1,016 -> 754 us; 149 senses 14,587 -> 8,273; 317 senses
+73,449 -> 34,267 dense and 5,435 -> 3,953 flat. (Lune is about four times slower than LuaJIT on this code.)
+
+## 84. A fixed random projection of the senses (Lume's learned sense code, the cheapest test)
+
+Lume proposed reading a learned code of B ~ 12-24 numbers instead of the senses, and found a *random* code of 16
+beat the dense mind on worlds 2 and 24. Here on the held-out worlds, 6 seeds, OMECA (the timers tier reads raw
+sense positions and cannot run on a code, so the dense arm is OMECA too; the OMECTA newborn's 187/704/314/207 is
+shown for scale). PROJ=B in tabgen: a Gaussian matrix drawn once, scaled 1/sqrt(B), no groups, no slot layout.
+
+| | 18 | 20 | 24 | 28 | mean |
+|---|---|---|---|---|---|
+| OMECA dense (37 senses) | 145 | 385 | 228 | 134 | 223 |
+| projection to 16 | 140 | 808 | 544 | 305 | 449 |
+| projection to 24 | 95 | 441 | 316 | 230 | 270 |
+
+Sixteen random numbers made of the senses learn twice as well as the senses themselves, and every seed of world
+24 reached its threshold (532-564) where the dense mind's seeds split 18-544: the reliability problem, mostly
+gone, for the price of a matrix multiply. 24 dims is half as good, so this is not monotone in B, and Lume found 12
+collapses. Cost is B squared and fixed whatever the game offers. What it cannot do: name a sense, so instincts
+declared on senses have no place to land, and the slot machinery (equivariant, pooled, groups) is off. Next: is it
+the compression (B < n) or the mixing (every input always live)? A square random rotation (PROJ=37) and PROJ=12
+are running.
