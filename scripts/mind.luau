@@ -149,7 +149,7 @@ end
 -- ------------------------------------------------------------------ the creature
 local GROUPS = Senses.groups(SLOTS, { "timeLeft", "armed" })
 local BLOCKS = if process.env.BLOCKS == "1" then GROUPS else nil
-local mind = Mind.new(#NAMES, CHOICES, { set = "OMECA", readings = READINGS, pref = PREF, horizon = 24, step = 12, beam = 10, blocks = BLOCKS, groups = GROUPS, sparse = process.env.SPARSE ~= "0" })
+local mind = Mind.new(#NAMES, CHOICES, { set = "OMECA", readings = READINGS, pref = PREF, horizon = 24, step = 12, beam = 10, blocks = BLOCKS, groups = GROUPS, sparse = process.env.SPARSE == "1", equivariant = process.env.EQUIV == "1" })
 local coach = Coach.new(mind, { explore = 5, every = 10, floor = nil })
 
 local function episode(learn)
@@ -215,7 +215,7 @@ print(("RESULT world %d: %s, last 10 episodes %.0f (greedy %.0f), %.0f us a thin
 
 -- save and reload: the creature is itself afterwards
 local saved = mind:save()
-local again = Mind.new(#NAMES, CHOICES, { set = "OMECA", readings = READINGS, pref = PREF, horizon = 24, step = 12, beam = 10, blocks = BLOCKS, groups = GROUPS, sparse = process.env.SPARSE ~= "0" })
+local again = Mind.new(#NAMES, CHOICES, { set = "OMECA", readings = READINGS, pref = PREF, horizon = 24, step = 12, beam = 10, blocks = BLOCKS, groups = GROUPS, sparse = process.env.SPARSE == "1", equivariant = process.env.EQUIV == "1" })
 again:load(saved)
 again.exploring = false
 local check = 0

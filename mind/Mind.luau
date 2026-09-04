@@ -101,6 +101,7 @@ function Mind.new(nIn: number, choices: { any }, o: any)
 	-- worth as much on the generated worlds as the arena's hand-written timers were (FINDINGS 72).
 	self.trend = if o.trend == nil then true else o.trend
 	self.nExtra = (if self.has.C then nIn else 0) + self.nHaz + self.nTrace + (if self.trend then nIn else 0)
+	self.groups = o.groups or o.blocks
 	self.nX = nIn + self.nExtra
 	-- DESCRIPTORS: o.descriptors[optionIndex] = { d1..dD } (o.descrDim = D), for the options that have
 	-- one (acts, usually). An option then enters the value through its descriptor, plus the descriptor's
@@ -131,7 +132,6 @@ function Mind.new(nIn: number, choices: { any }, o: any)
 	-- in every covariance update, with all its numbers and copies. Linear cost in the absent slots, but sound
 	-- only for slots that never return: a returning slot's stale cross-covariance wrecks its weights (FINDINGS
 	-- 77). Use it for slots that are absent for good, not for things that come and go.
-	self.groups = o.groups or o.blocks
 	-- off unless asked: skipping an absent slot is sound only for slots that never come back (FINDINGS 77)
 	self.sparse = o.sparse == true and self.groups ~= nil
 	self.sparseReset = o.sparseReset == true -- a slot back from absence forgets its cross-covariance
@@ -201,7 +201,31 @@ function Mind.new(nIn: number, choices: { any }, o: any)
 			self.O.P[f][f] = 1 / self.extraRidge
 		end
 	end
-	if self.has.E then
+	-- EQUIVARIANT effects (o.equivariant = true, with o.groups from Senses.groups): per option, one law for how
+	-- the self and world readings change, and one law shared across every slot for how a slot's readings change
+	-- (inputs: the self readings, the slot's own, their trends, and the slot's kind). Every present slot's rows
+	-- train the same law and absent slots are skipped, so parameters do not grow with the slot count and the
+	-- cost grows with the slots present: at 318 senses the settle fell from 8.9 ms to 2.0 ms in the prototype
+	-- with no loss on world 2 (FINDINGS 80). Proposed in docs/IDEAS.md.
+	self.equivariant = o.equivariant == true and self.groups ~= nil and #self.groups >= 2
+	if self.has.E and self.equivariant then
+		self.eqSelf = self.groups[1]
+		self.eqSlots = {}
+		for g = 2, #self.groups do
+			table.insert(self.eqSlots, self.groups[g])
+		end
+		self.eqSlotSize = #self.groups[2]
+		self.eqKinds = math.min(#self.eqSlots, 6)
+		local nSelf, nSlot = #self.eqSelf, self.eqSlotSize
+		local copies = if self.trend then 2 else 1
+		self.eqFG = 1 + nSelf * copies
+		self.eqFS = 1 + (nSelf + nSlot) * copies + self.eqKinds
+		self.EG, self.ES = {}, {}
+		for k = 1, nOpt do
+			self.EG[k] = RLS.new(self.eqFG, nSelf, self.ridge)
+			self.ES[k] = RLS.new(self.eqFS, nSlot, self.ridge)
+		end
+	elseif self.has.E then
 		self.E = {}
 		for k = 1, nOpt do
 			self.E[k] = RLS.new(1 + self.nX, nIn, self.ridge)
@@ -523,7 +547,122 @@ local function optionEffect(self, cache, k: number, X: { number }, phi: { number
 	return e
 end
 
+-- where the trend copy of the senses sits in X (nil without trends)
+function Mind:trendOffset(): number?
+	if not self.trend then
+		return nil
+	end
+	return self.nIn + (if self.has.C then self.nIn else 0)
+end
+
+function Mind:eqPhiG(X: { number }, out: { number }?): { number }
+	local phi = out or {}
+	phi[1] = 1
+	local k = 1
+	for _, i in ipairs(self.eqSelf) do
+		k += 1
+		phi[k] = X[i]
+	end
+	local to = self:trendOffset()
+	if to then
+		for _, i in ipairs(self.eqSelf) do
+			k += 1
+			phi[k] = X[to + i]
+		end
+	end
+	return phi
+end
+
+function Mind:eqPhiS(X: { number }, g: number, out: { number }?): { number }
+	local phi = out or {}
+	phi[1] = 1
+	local k = 1
+	local B = self.eqSlots[g]
+	for _, i in ipairs(self.eqSelf) do
+		k += 1
+		phi[k] = X[i]
+	end
+	for _, i in ipairs(B) do
+		k += 1
+		phi[k] = X[i]
+	end
+	local to = self:trendOffset()
+	if to then
+		for _, i in ipairs(self.eqSelf) do
+			k += 1
+			phi[k] = X[to + i]
+		end
+		for _, i in ipairs(B) do
+			k += 1
+			phi[k] = X[to + i]
+		end
+	end
+	local kind = math.min(g, self.eqKinds)
+	for q = 1, self.eqKinds do
+		k += 1
+		phi[k] = if q == kind then 1 else 0
+	end
+	return phi
+end
+
+function Mind:stepAheadEquiv(X: { number }, picks: { number }, out: { number }?, cache: any?): ({ number }, number)
+	local nxt = out or {}
+	for i = 1, self.nIn do
+		nxt[i] = X[i]
+	end
+	cache = cache or {}
+	local phiG = cache.phiG
+	if not phiG then
+		phiG = self:eqPhiG(X)
+		cache.phiG = phiG
+	end
+	local phiS = cache.phiS
+	if not phiS then
+		phiS = {}
+		for g, B in ipairs(self.eqSlots) do
+			if X[B[1]] ~= 0 then
+				phiS[g] = self:eqPhiS(X, g)
+			end
+		end
+		cache.phiS = phiS
+	end
+	local total, count = 0, 0
+	for ci = 1, #self.choices do
+		local k = self.optIndex[ci][picks[ci]]
+		local G, S = self.EG[k], self.ES[k]
+		if G.n > 0 then
+			for r, i in ipairs(self.eqSelf) do
+				local c = RLS.confidence(G, r)
+				if c > 0 then
+					nxt[i] += c * RLS.predict(G, r, phiG)
+				end
+				total += c
+				count += 1
+			end
+		end
+		if S.n > 0 then
+			for g, B in ipairs(self.eqSlots) do
+				local ps = phiS[g]
+				if ps then
+					for r, i in ipairs(B) do
+						local c = RLS.confidence(S, r)
+						if c > 0 then
+							nxt[i] += c * RLS.predict(S, r, ps)
+						end
+						total += c
+						count += 1
+					end
+				end
+			end
+		end
+	end
+	return nxt, if count > 0 then total / count else 0
+end
+
 function Mind:stepAhead(X: { number }, picks: { number }, out: { number }?, cache: any?): ({ number }, number)
+	if self.equivariant then
+		return self:stepAheadEquiv(X, picks, out, cache)
+	end
 	local nxt = out or {}
 	for i = 1, self.nIn do
 		nxt[i] = X[i]
@@ -896,7 +1035,29 @@ function Mind:settle(totals: { number }, xNow: { number }, tick: number, over: b
 	if self.has.E then
 		local keep = {}
 		for _, r in ipairs(self.pendingE) do
-			if tick - r.at >= self.STEP or over then
+			if (tick - r.at >= self.STEP or over) and self.equivariant then
+				local X = r.X
+				local phiG = self:eqPhiG(X)
+				local dyG = {}
+				for q, i in ipairs(self.eqSelf) do
+					dyG[q] = xNow[i] - X[i]
+				end
+				local phiS, dyS = {}, {}
+				for ci = 1, #self.choices do
+					local k = self.optIndex[ci][r.picks[ci]]
+					RLS.update(self.EG[k], phiG, dyG)
+					local S = self.ES[k]
+					for g, B in ipairs(self.eqSlots) do
+						if X[B[1]] ~= 0 and xNow[B[1]] ~= 0 then
+							self:eqPhiS(X, g, phiS)
+							for q, i in ipairs(B) do
+								dyS[q] = xNow[i] - X[i]
+							end
+							RLS.update(S, phiS, dyS)
+						end
+					end
+				end
+			elseif tick - r.at >= self.STEP or over then
 				local phi = self:phiE(r.X)
 				local dy = {}
 				for i = 1, self.nIn do
@@ -1493,9 +1654,17 @@ function Mind:save()
 		table.insert(out.mem, { x = table.clone(e.x), picks = table.clone(e.picks), y = e.y, n = e.n, sum = e.sum, mask = e.mask })
 	end
 	if self.has.E and not self.sharedE then
-		out.E = {}
-		for k = 1, self.nOpt do
-			out.E[k] = RLS.save(self.E[k])
+		if self.equivariant then
+			out.EG, out.ES = {}, {}
+			for k = 1, self.nOpt do
+				out.EG[k] = RLS.save(self.EG[k])
+				out.ES[k] = RLS.save(self.ES[k])
+			end
+		else
+			out.E = {}
+			for k = 1, self.nOpt do
+				out.E[k] = RLS.save(self.E[k])
+			end
 		end
 	end
 	if self.has.C then
@@ -1545,9 +1714,15 @@ function Mind:load(saved)
 			end
 		end
 	end
-	if saved.E and self.has.E and not self.sharedE then
+	if saved.E and self.has.E and not self.sharedE and not self.equivariant then
 		for k = 1, self.nOpt do
 			self.E[k] = RLS.load(saved.E[k], self.ridge)
+		end
+	end
+	if saved.EG and self.equivariant then
+		for k = 1, self.nOpt do
+			self.EG[k] = RLS.load(saved.EG[k], self.ridge)
+			self.ES[k] = RLS.load(saved.ES[k], self.ridge)
 		end
 	end
 	if saved.Cm and self.has.C then
@@ -1561,8 +1736,12 @@ end
 
 -- The effects models are the physics of the world, and every creature of a kind lives in the same
 -- one; sharing them is the largest saving in memory and the fastest learning of what acts do.
-function Mind:shareEffects(E)
-	self.E = E
+function Mind:shareEffects(E, EG, ES)
+	if self.equivariant then
+		self.EG, self.ES = EG, ES
+	else
+		self.E = E
+	end
 	self.sharedE = true
 end
 

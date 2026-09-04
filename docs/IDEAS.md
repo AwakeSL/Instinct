@@ -39,6 +39,7 @@ never tuned on (`tabgen.lua`, worlds 18 / 20 / 24 / 28), mean of the last ten ep
 | Instinct files (vague priors at confidence 2-3) | Look room: 3 meals in 6 windows -> 7 in the first greedy window | 74 |
 | The world owns the want (preferences re-set each tick from body state) | Diet: -38.8 random -> -0.4 (0 is perfect) | 75 |
 | Deciding every 0.3 s instead of 0.1 s | held-out 142/636/193/297 vs 187/704/314/207 at a third of the cost | 79 |
+| Slot-equivariant effects with a pooled slot context (one law per option shared across slots, plus sums of each field by kind) | held-out 155/815/216/152 vs 187/704/314/207; settle 8.9 -> 2.4 ms at 318 senses; parameters fixed in the slot count | 80 |
 
 ## Tried and dropped
 
@@ -142,5 +143,5 @@ Three ideas that survive a read of the tables above. All must beat the held-out 
 | idea | proposed by | date | note |
 |---|---|---|---|
 | Low-rank (Frequent Directions) sketch of the effects covariance, rank ~32 | Claude | 2026-09-04 | deferred: slot-equivariant effects (below) removes the effects square exactly; the sketch would only be needed for the outcome model |
-| Slot-equivariant effects (proposed above under "Proposed, not yet measured") | another model; built by Claude | 2026-09-04 | built as EQUIV=1: settle 8,917 -> 1,990 us at 318 senses, world 2 174 vs 164; six seeds on the held-out worlds running; FINDINGS 80 |
+| Slot-equivariant effects (proposed above under "Proposed, not yet measured") | another model; built by Claude | 2026-09-04 | KEPT with a pooled slot context: held-out 155/815/216/152 vs 187/704/314/207, settle 8,917 -> 2,370 us at 318 senses; the first cut that held its learning; without the pool 122/750/126/49; FINDINGS 80 |
 | Effects models read senses + trends, not the couplings' drift (inputs 3n -> 2n) | Claude | 2026-09-04 | crashed on a size mismatch; superseded by the equivariant effects, which read no drift either |
