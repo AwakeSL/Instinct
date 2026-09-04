@@ -93,6 +93,16 @@ spawn of the same kind, and carries the creature's physics with it (its effects 
 choices lean on the look-ahead, and without them a code creature's spawn scored 4 where the parent scored 220);
 `mind:save()` and `mind:load()` are the whole creature as plain data.
 
+## Memory of individuals
+
+Two things of one kind read the same through the senses. With `subjects = { dim = 4 }` every named thing the
+creature senses (an entity carrying an `id`) gets four learned numbers of its own, carried in its slot as
+`<slot>who1..4` senses and revised from the creature's own rows: an individual comes to mean what it has
+preceded, a meal or a wound. `mind:subject(id)` is what it holds about one of them, the game's "why does it
+hate me". Lay the senses out with `Senses.layout(SLOTS, WORLD, 4)` and encode with `Senses.encode(me, SLOTS,
+entities, world, range, mind:whoFn(), 4)`. Measured on a world of three look-alike strangers (FINDINGS 92): it
+learns who feeds it and who hurts it on every seed, where without the memory it approaches everyone.
+
 ## Cost, and how it scales
 
 A settle (learning) is the cost: with the full update it grows with the square of the sense count (prototype:

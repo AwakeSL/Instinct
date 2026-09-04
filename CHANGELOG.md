@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.7.0
+
+- Memory of individuals: `subjects = { dim = 4, learn = 0.05, forget = 0 }`. Every named thing the creature
+  senses (an entity with an `id`) carries `dim` learned numbers in its slot, filled by `Senses.encode(...,
+  mind:whoFn(), dim)` with `Senses.layout(slots, world, dim)` and `Senses.groups(slots, world, dim)`; each row
+  the individual was present for revises them along the value's gradient; `forget` relaxes them over the
+  thinks an individual goes unseen. `mind:subject(id)` and `mind:subjectList()` read what is held. Saves carry
+  them. On a world of three look-alike individuals (one feeds, one wounds) the creature learns who is who and
+  beats the hand policy by half on every seed, where without the memory it cannot tell them apart (FINDINGS 92).
+- Headless harness: `WORLD=3` (people), `SUBJ=D`, `SUBJLEARN`.
+
 ## 0.6.7
 
 - `lms = mu`: every model fits by normalised LMS instead of RLS (no covariance). Measured paired on eight

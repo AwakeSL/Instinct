@@ -98,6 +98,35 @@ function Mind.new(nIn: number, choices: { any }, o: any)
 	-- combinations come back (to rounding). Acquired features pairing two choices are the one exception and are
 	-- evaluated per combination. Off with o.separable = false, or whenever the set has U (the spread is not additive).
 	self.separable = o.separable ~= false
+	-- SUBJECTS (o.subjects = { dim, learn, forget, fields }): memory of individuals. Every named thing the
+	-- creature senses gets `dim` learned numbers, carried in its slot's `who` fields (Senses.layout with
+	-- subjectDim) and read by every model as ordinary senses. Each row the individual was present for moves
+	-- its numbers along the value's gradient at the row's error, at `learn`, so an individual comes to mean
+	-- what it has preceded: a meal, a wound. `fields[slot] = { indices }` says where each slot's who-fields
+	-- sit in the senses (from Senses.subjectFields, or worked out from `groups` and `dim`).
+	local sub = o.subjects
+	if sub then
+		self.subjectDim = sub.dim or 4
+		self.subjectLearn = sub.learn or 0.05
+		self.subjectForget = sub.forget or 0
+		self.subjectFields = sub.fields
+		if not self.subjectFields and self.groups then
+			-- the last `dim` senses of every slot group
+			self.subjectFields = {}
+			for g = 2, #self.groups do
+				local B = self.groups[g]
+				local f = {}
+				for q = #B - self.subjectDim + 1, #B do
+					table.insert(f, B[q])
+				end
+				self.subjectFields[g - 1] = f
+			end
+		end
+		self.subjectOf = {} -- id -> { numbers }
+		self.subjectSeen = {} -- id -> rows
+		self.subjectLast = {} -- id -> the think it was last seen at
+		self.idsNow = {} -- slot -> id, as the senses were last encoded
+	end
 	-- LEARNER (o.lms = mu): every model fits by normalised LMS at that step instead of RLS. No covariance, so
 	-- every settle is linear in the inputs; Kestrel's learner fits that way. Set after the models are built.
 	self.lms = o.lms
@@ -1154,6 +1183,98 @@ function Mind:models(): { any }
 	return out
 end
 
+-- ------------------------------------------------------------------ subjects
+
+-- The encoder's hook: the numbers this creature holds about an individual, and a note of which slot it is in.
+function Mind:whoFn()
+	return function(id: any, slot: number?): { number }?
+		if slot then
+			self.idsNow[slot] = id
+		end
+		local d = self.subjectOf[id]
+		if not d then
+			d = table.create(self.subjectDim, 0)
+			self.subjectOf[id] = d
+		end
+		-- forgetting: what is held about an individual relaxes toward nothing over the thinks it was not seen
+		-- for (`forget` a think), so a stranger of long ago reads like any other of its kind again
+		local f = self.subjectForget
+		if f > 0 then
+			local now = self.stats.thinks
+			local last = self.subjectLast[id]
+			if last and now > last + 1 then
+				local keep = (1 - f) ^ (now - last - 1)
+				for q = 1, self.subjectDim do
+					d[q] *= keep
+				end
+			end
+			self.subjectLast[id] = now
+		end
+		return d
+	end
+end
+
+-- Every individual the creature holds something about: id -> { who = numbers, seen = rows }.
+function Mind:subjectList(): { [any]: any }
+	local out = {}
+	for id, d in pairs(self.subjectOf or {}) do
+		out[id] = { who = table.clone(d), seen = self.subjectSeen[id] or 0 }
+	end
+	return out
+end
+
+-- The numbers held about one individual (nil for a stranger).
+function Mind:subject(id: any): { number }?
+	return self.subjectOf and self.subjectOf[id] or nil
+end
+
+-- One row's worth of revision: the individuals present move along the value's gradient at the row's error.
+function Mind:subjectStep(r, y: { number })
+	local ids = r.ids
+	if not ids or not self.subjectFields then
+		return
+	end
+	local score, predicted = 0, self:valueOf(r.phi)
+	for q = 1, self.NRO do
+		score += self.pref[q] * y[q]
+	end
+	local e = score - predicted
+	if e ~= e then
+		return
+	end
+	local raw = r.x
+	if not raw then
+		return
+	end
+	local phi = self.subjectPhi or {}
+	self.subjectPhi = phi
+	local eps = 1e-3
+	for slot, id in pairs(ids) do
+		local fields = self.subjectFields[slot]
+		local d = self.subjectOf[id]
+		if fields and d then
+			-- the value's slope along each who-field, by a small step through the whole read
+			local grad = {}
+			for q, i in ipairs(fields) do
+				local was = raw[i]
+				raw[i] = was + eps
+				local X = self:extend(self:encode(raw))
+				self:phiO(X, r.picks, phi)
+				grad[q] = (self:valueOf(phi) - predicted) / eps
+				raw[i] = was
+			end
+			local n = (self.subjectSeen[id] or 0) + 1
+			self.subjectSeen[id] = n
+			local rate = self.subjectLearn / (1 + n / 200)
+			for q = 1, self.subjectDim do
+				d[q] = math.clamp(d[q] + rate * e * grad[q], -1, 1)
+			end
+			self.stats.subjectSteps = (self.stats.subjectSteps or 0) + 1
+		end
+	end
+	self.lastThinkX = self.lastThinkX -- (the extend above does not touch it)
+end
+
 -- ------------------------------------------------------------------ separable pick search
 
 -- Which choice an outcome input depends on: nil for none, a choice index for one, false for several (the
@@ -1451,13 +1572,24 @@ end
 function Mind:think(sensesOf, feasible, reflex: boolean?)
 	local t0 = clock()
 	local xs, Xs = {}, {}
+	local idsFor = if self.subjectOf then {} else nil
 	for a = 1, #self.choices[1].options do
-		xs[a] = self:encode(sensesOf(a))
+		if idsFor then
+			self.idsNow = {}
+		end
+		local rawX = sensesOf(a)
+		xs[a] = self:encode(rawX)
 		Xs[a] = self:extend(xs[a])
+		if idsFor then
+			idsFor[a] = { ids = self.idsNow, raw = rawX }
+		end
 	end
 	local x1 = xs[1]
 	local function finish(picks, event)
 		self.lastThinkX = xs[picks[1]]
+		if idsFor then
+			self.lastIds, self.lastRaw = idsFor[picks[1]].ids, idsFor[picks[1]].raw
+		end
 		self.stats.thinks += 1
 		self.thinkTime += clock() - t0
 		return picks, xs[picks[1]], self:phiO(Xs[picks[1]], picks), event
@@ -1642,7 +1774,7 @@ end
 function Mind:note(x: { number }, phi: { number }, picks: { number }, event, totals: { number }, tick: number)
 	local X = self:extend(x)
 	local snap = table.clone(totals)
-	table.insert(self.pending, { x = x, X = X, phi = phi, picks = picks, event = event, totals = snap, at = tick })
+	table.insert(self.pending, { x = x, X = X, phi = phi, picks = picks, event = event, totals = snap, at = tick, ids = self.lastIds, rawX = self.lastRaw })
 	self.tickTotals[tick] = snap
 	if self.has.E then
 		table.insert(self.pendingE, { X = X, picks = picks, at = tick })
@@ -1858,6 +1990,10 @@ function Mind:settle(totals: { number }, xNow: { number }, tick: number, over: b
 			RLS.update(self.O, r.phi, y, reps, self.rowWeight)
 			if self.descr and self.descrLearn > 0 then
 				self:descrStep(r, y)
+			end
+			if self.subjectOf and r.ids then
+				r.x = r.rawX or r.x
+				self:subjectStep(r, y)
 			end
 			S.updates += 1
 			S.kept += 1
@@ -2697,6 +2833,7 @@ end
 -- reloaded from this is itself, a little less sure of its couplings.
 function Mind:save()
 	local out = {
+		subjects = if self.subjectOf then { of = self.subjectOf, seen = self.subjectSeen, last = self.subjectLast } else nil,
 		nIn = self.nIn,
 		nRaw = self.nRaw,
 		codeSeed = self.codeSeed,
@@ -2762,6 +2899,9 @@ function Mind:load(saved)
 		self.O.blocks = blocks
 	end
 	self.MEM, self.FLAT = {}, {}
+	if saved.subjects and self.subjectOf then
+		self.subjectOf, self.subjectSeen, self.subjectLast = saved.subjects.of, saved.subjects.seen or {}, saved.subjects.last or {}
+	end
 	for _, e in ipairs(saved.mem or {}) do
 		storeMemory(self, e.x, e.picks, e.y, e.mask)
 		local last = self.MEM[#self.MEM]

@@ -5622,3 +5622,32 @@ so the harness is fine. kesmind.lua and tabgen_k.lua were both edited after 88 w
 so the file is probably mid-change. Until the version that produced 88 is restored, the foresight tier has
 been measured on a learner that is not the one in the table, and the comparison says nothing about way 2. The
 patch (`patch_kforesee.py` in the scratchpad, kesmind_f.lua) is ready to re-run in a minute once it is.
+
+## 92. Memory of individuals: subject descriptors
+
+Two things of one kind read the same through the senses, so a creature could never treat them differently:
+"the nearest host" was all it could know. Now every named thing carries `dim` learned numbers in its slot
+(`Senses.layout(slots, world, dim)` adds `<slot>who1..dim`; `Senses.encode` fills them through the mind's
+`whoFn`), read by every model as ordinary senses, and each row the individual was present for moves its
+numbers along the value's gradient at the row's error (`subjectStep`, a finite difference through the whole
+read, so it is right for the dense, pooled and code layouts and through acquired features). Forgetting relaxes
+the numbers toward nothing over the thinks an individual was not seen for. Saves carry them.
+
+The world that needs it (`WORLD=3`, people): three individuals of one kind wander; reaching A is a meal,
+reaching B a wound, C nothing. Nothing in their senses tells them apart. Eight seeds, 30 episodes, the last
+ten's mean against a hand policy that approaches A only when A is nearest (about 104):
+
+| | reached | median episode | median final | finals |
+|---|---|---|---|---|
+| dense, no memory | 6/8 | 11.5 | 99 | 43 61 100 145 169 134 61 98 |
+| dense, memory of 4 | 8/8 | 11 | 149 | 229 102 70 187 126 172 89 181 |
+| dense, memory of 2 | 4/8 | 16.5 | 63 | 40 86 138 34 129 30 161 11 |
+| code 16, memory of 4 | 6/8 | 13 | 151 | 171 16 150 163 41 153 157 128 |
+| flat, memory of 4 | 7/8 | 18 | 128 | 67 150 163 167 64 61 117 139 |
+| world 2, dense, memory of 4 (regression) | 6/8 | 11.5 | 222 | against 7/8, 12, 224 without |
+
+A creature without the memory approaches everyone and nets what the odds give it, about the hand policy's
+score. With four numbers a person it learns who is who and beats the hand policy by half, on every seed;
+a reloaded creature keeps its opinions (140 on five check episodes). Two numbers are not enough. The code and
+the flat mind take it too. Cost: four senses a slot. Shipped as 0.7.0 with a Studio trial (People: three
+look-alike strangers with their held numbers on their labels).
